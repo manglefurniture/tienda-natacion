@@ -5,6 +5,7 @@ require_once __DIR__ . '/_bootstrap.php';
 admin_require_auth();
 
 $db = Database::connection();
+OrderService::releaseExpiredReservations($db);
 $products = $db->query(
     'SELECT p.id, p.nombre, p.precio, p.stock, p.activo,
             (SELECT COUNT(*) FROM producto_variantes v WHERE v.producto_id = p.id AND v.activo = 1) AS variantes,
@@ -12,6 +13,8 @@ $products = $db->query(
      FROM productos p
      ORDER BY p.actualizado_en DESC, p.id DESC'
 )->fetchAll();
+$pendingOrders = (int) $db->query("SELECT COUNT(*) FROM pedidos WHERE estado = 'pending_payment'")->fetchColumn();
+$paidOrders = (int) $db->query("SELECT COUNT(*) FROM pedidos WHERE estado = 'paid'")->fetchColumn();
 $flash = admin_take_flash();
 ?>
 <!doctype html>
@@ -22,10 +25,15 @@ $flash = admin_take_flash();
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Productos | Administración</title>
   <link rel="stylesheet" href="/admin/admin.css?v=1">
+  <link rel="stylesheet" href="/admin/admin-extra.css?v=1">
 </head>
 <body>
 <header class="admin-header">
   <a class="admin-brand" href="/admin/">Hache Natación <span>Tienda</span></a>
+  <nav class="admin-nav">
+    <a class="is-active" href="/admin/">Productos</a>
+    <a href="/admin/pedidos.php">Pedidos<?= $pendingOrders + $paidOrders > 0 ? ' · ' . ($pendingOrders + $paidOrders) : '' ?></a>
+  </nav>
   <div class="admin-header-actions">
     <a class="admin-secondary-button" href="/" target="_blank" rel="noopener">Ver tienda</a>
     <form method="post" action="/admin/logout.php">
@@ -45,6 +53,13 @@ $flash = admin_take_flash();
     <a class="admin-primary-button" href="/admin/producto.php">+ Nuevo producto</a>
   </section>
 
+  <div class="admin-stat-strip">
+    <span class="admin-stat"><strong><?= count($products) ?></strong> productos</span>
+    <span class="admin-stat"><strong><?= $pendingOrders ?></strong> pedidos pendientes</span>
+    <span class="admin-stat"><strong><?= $paidOrders ?></strong> por entregar</span>
+    <span class="admin-stat"><strong><?= extension_loaded('gd') ? 'Activa' : 'Pendiente' ?></strong> optimización de fotos</span>
+  </div>
+
   <?php if ($flash !== null): ?>
     <div class="admin-alert <?= ($flash['type'] ?? '') === 'error' ? 'admin-alert-error' : 'admin-alert-success' ?>">
       <?= admin_e((string) ($flash['message'] ?? '')) ?>
@@ -60,22 +75,40 @@ $flash = admin_take_flash();
     <?php else: ?>
       <div class="product-admin-list">
         <?php foreach ($products as $product): ?>
+          <?php
+            $images = (int) $product['imagenes'];
+            $stock = (int) $product['stock'];
+            $active = (int) $product['activo'] === 1;
+          ?>
           <article class="product-admin-row">
             <div class="product-admin-main">
               <div class="product-admin-name">
                 <strong><?= admin_e($product['nombre']) ?></strong>
-                <span class="status-pill <?= (int) $product['activo'] === 1 ? 'status-active' : 'status-inactive' ?>">
-                  <?= (int) $product['activo'] === 1 ? 'Publicado' : 'Oculto' ?>
+                <span class="status-pill <?= $active ? 'status-active' : 'status-inactive' ?>">
+                  <?= $active ? 'Publicado' : 'Oculto' ?>
                 </span>
               </div>
               <div class="product-admin-meta">
                 <span>$<?= number_format((float) $product['precio'], 2) ?></span>
-                <span><?= (int) $product['stock'] ?> unidades</span>
+                <span><?= $stock ?> unidades</span>
                 <span><?= (int) $product['variantes'] ?> variantes</span>
-                <span><?= (int) $product['imagenes'] ?> fotos</span>
+                <span><?= $images ?> fotos</span>
               </div>
+              <?php if ($images === 0 || $stock <= 2): ?>
+                <div class="catalog-badges">
+                  <?php if ($images === 0): ?><span class="status-pill status-warning">Sin foto</span><?php endif; ?>
+                  <?php if ($stock === 0): ?><span class="status-pill status-danger">Sin stock</span><?php elseif ($stock <= 2): ?><span class="status-pill status-warning">Stock bajo</span><?php endif; ?>
+                </div>
+              <?php endif; ?>
             </div>
-            <a class="admin-edit-button" href="/admin/producto.php?id=<?= (int) $product['id'] ?>">Editar</a>
+            <div class="quick-actions">
+              <form method="post" action="/admin/toggle-producto.php">
+                <input type="hidden" name="csrf" value="<?= admin_e(admin_csrf_token()) ?>">
+                <input type="hidden" name="id" value="<?= (int) $product['id'] ?>">
+                <button class="admin-mini-button" type="submit"><?= $active ? 'Ocultar' : 'Publicar' ?></button>
+              </form>
+              <a class="admin-edit-button" href="/admin/producto.php?id=<?= (int) $product['id'] ?>">Editar</a>
+            </div>
           </article>
         <?php endforeach; ?>
       </div>
