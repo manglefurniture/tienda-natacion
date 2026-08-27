@@ -2,3 +2,5 @@
 config/database.local.php
 storage/*
 !storage/.gitkeep
+public/uploads/*
+!public/uploads/.gitkeep
