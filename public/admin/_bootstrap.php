@@ -71,7 +71,7 @@ function admin_redirect(string $location): never
 
 function admin_slugify(string $value): string
 {
-    $value = trim(mb_strtolower($value, 'UTF-8'));
+    $value = trim($value);
     if (function_exists('transliterator_transliterate')) {
         $converted = transliterator_transliterate('Any-Latin; Latin-ASCII; Lower()', $value);
         if (is_string($converted)) {
@@ -81,6 +81,8 @@ function admin_slugify(string $value): string
         $converted = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
         if (is_string($converted)) {
             $value = strtolower($converted);
+        } else {
+            $value = strtolower($value);
         }
     }
 
