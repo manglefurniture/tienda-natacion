@@ -9,6 +9,7 @@ OrderService::releaseExpiredReservations($db);
 $products = $db->query(
     'SELECT p.id, p.nombre, p.precio, p.stock, p.activo,
             (SELECT COUNT(*) FROM producto_variantes v WHERE v.producto_id = p.id AND v.activo = 1) AS variantes,
+            (SELECT MIN(v.stock) FROM producto_variantes v WHERE v.producto_id = p.id AND v.activo = 1) AS min_variante_stock,
             (SELECT COUNT(*) FROM producto_imagenes i WHERE i.producto_id = p.id) AS imagenes
      FROM productos p
      ORDER BY p.actualizado_en DESC, p.id DESC'
@@ -78,7 +79,11 @@ $flash = admin_take_flash();
           <?php
             $images = (int) $product['imagenes'];
             $stock = (int) $product['stock'];
+            $variantCount = (int) $product['variantes'];
+            $variantMinimum = $product['min_variante_stock'] !== null ? (int) $product['min_variante_stock'] : null;
             $active = (int) $product['activo'] === 1;
+            $isOut = $stock === 0 || ($variantCount > 0 && $variantMinimum === 0);
+            $isLow = !$isOut && ($variantCount > 0 ? $variantMinimum !== null && $variantMinimum <= 2 : $stock <= 2);
           ?>
           <article class="product-admin-row">
             <div class="product-admin-main">
@@ -91,13 +96,13 @@ $flash = admin_take_flash();
               <div class="product-admin-meta">
                 <span>$<?= number_format((float) $product['precio'], 2) ?></span>
                 <span><?= $stock ?> unidades</span>
-                <span><?= (int) $product['variantes'] ?> variantes</span>
+                <span><?= $variantCount ?> variantes</span>
                 <span><?= $images ?> fotos</span>
               </div>
-              <?php if ($images === 0 || $stock <= 2): ?>
+              <?php if ($images === 0 || $isOut || $isLow): ?>
                 <div class="catalog-badges">
                   <?php if ($images === 0): ?><span class="status-pill status-warning">Sin foto</span><?php endif; ?>
-                  <?php if ($stock === 0): ?><span class="status-pill status-danger">Sin stock</span><?php elseif ($stock <= 2): ?><span class="status-pill status-warning">Stock bajo</span><?php endif; ?>
+                  <?php if ($isOut): ?><span class="status-pill status-danger">Sin stock</span><?php elseif ($isLow): ?><span class="status-pill status-warning">Stock bajo</span><?php endif; ?>
                 </div>
               <?php endif; ?>
             </div>
