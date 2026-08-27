@@ -76,6 +76,14 @@ $jsVersion = (string) (@filemtime(__DIR__ . '/assets/store.js') ?: time());
   </button>
 </header>
 
+<div class="cart-toast" id="cartToast" role="status" aria-live="polite" aria-hidden="true">
+  <div class="cart-toast-copy">
+    <span class="cart-toast-check" aria-hidden="true">✓</span>
+    <div><strong id="cartToastTitle">Producto agregado</strong><small id="cartToastDetail"></small></div>
+  </div>
+  <button type="button" id="cartToastAction">Finalizar compra</button>
+</div>
+
 <main>
   <section class="hero">
     <div>
@@ -233,7 +241,7 @@ $jsVersion = (string) (@filemtime(__DIR__ . '/assets/store.js') ?: time());
   <div class="cart-empty" id="cartEmpty">Tu carrito está vacío.</div>
   <div class="cart-summary">
     <div><span>Total</span><strong id="cartTotal">$0.00</strong></div>
-    <button type="button" class="checkout-button" disabled>Pago en línea · siguiente etapa</button>
+    <button type="button" class="checkout-button" id="checkoutButton" disabled>Finalizar compra</button>
     <small>El precio, la talla y el stock se validarán nuevamente antes de pagar.</small>
   </div>
 </aside>
