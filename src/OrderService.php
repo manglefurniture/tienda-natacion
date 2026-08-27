@@ -139,7 +139,8 @@ final class OrderService
                     $update = $db->prepare('UPDATE pedidos SET incidencia = ? WHERE id = ?');
                     $update->execute([$incident, $orderId]);
                 } else {
-                    if ((int) $order['stock_reservado'] !== 1 && (string) $order['estado'] !== 'paid') {
+                    $alreadySettled = in_array((string) $order['estado'], ['paid', 'completed'], true);
+                    if ((int) $order['stock_reservado'] !== 1 && !$alreadySettled) {
                         if (!self::reserveFromExistingItems($db, $orderId)) {
                             $incident = 'Pago aprobado, pero ya no hay stock suficiente. Revisión manual requerida.';
                             $update = $db->prepare(
@@ -151,21 +152,29 @@ final class OrderService
                         }
                     }
 
-                    $update = $db->prepare(
-                        "UPDATE pedidos
-                         SET estado = 'paid', stock_reservado = 0, reserva_expira_en = NULL, incidencia = NULL
-                         WHERE id = ?"
-                    );
+                    if ((string) $order['estado'] === 'completed') {
+                        $update = $db->prepare(
+                            'UPDATE pedidos SET stock_reservado = 0, reserva_expira_en = NULL, incidencia = NULL WHERE id = ?'
+                        );
+                    } else {
+                        $update = $db->prepare(
+                            "UPDATE pedidos
+                             SET estado = 'paid', stock_reservado = 0, reserva_expira_en = NULL, incidencia = NULL
+                             WHERE id = ?"
+                        );
+                    }
                     $update->execute([$orderId]);
                 }
             } elseif (in_array($status, ['rejected', 'cancelled', 'cancelled_by_collector'], true)) {
                 if ((int) $order['stock_reservado'] === 1) {
                     self::restoreReservation($db, $orderId);
                 }
-                $update = $db->prepare(
-                    "UPDATE pedidos SET estado = 'cancelled', stock_reservado = 0, reserva_expira_en = NULL WHERE id = ?"
-                );
-                $update->execute([$orderId]);
+                if (!in_array((string) $order['estado'], ['paid', 'completed'], true)) {
+                    $update = $db->prepare(
+                        "UPDATE pedidos SET estado = 'cancelled', stock_reservado = 0, reserva_expira_en = NULL WHERE id = ?"
+                    );
+                    $update->execute([$orderId]);
+                }
             } elseif (in_array($status, ['refunded', 'charged_back'], true)) {
                 if ((string) $order['estado'] === 'paid' || (string) $order['estado'] === 'completed') {
                     self::restoreReservation($db, $orderId);
