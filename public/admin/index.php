@@ -26,7 +26,7 @@ $flash = admin_take_flash();
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Productos | Administración</title>
   <link rel="stylesheet" href="/admin/admin.css?v=1">
-  <link rel="stylesheet" href="/admin/admin-extra.css?v=1">
+  <link rel="stylesheet" href="/admin/admin-extra.css?v=2">
 </head>
 <body>
 <header class="admin-header">
@@ -56,8 +56,8 @@ $flash = admin_take_flash();
 
   <div class="admin-stat-strip">
     <span class="admin-stat"><strong><?= count($products) ?></strong> productos</span>
-    <span class="admin-stat"><strong><?= $pendingOrders ?></strong> pedidos pendientes</span>
-    <span class="admin-stat"><strong><?= $paidOrders ?></strong> por entregar</span>
+    <a class="admin-stat admin-stat-link" href="/admin/pedidos.php" aria-label="Ver <?= $pendingOrders ?> pedidos pendientes"><strong><?= $pendingOrders ?></strong> pedidos pendientes <span aria-hidden="true">→</span></a>
+    <a class="admin-stat admin-stat-link" href="/admin/pedidos.php" aria-label="Ver <?= $paidOrders ?> pedidos por entregar"><strong><?= $paidOrders ?></strong> por entregar <span aria-hidden="true">→</span></a>
     <span class="admin-stat"><strong><?= extension_loaded('gd') ? 'Activa' : 'Pendiente' ?></strong> optimización de fotos</span>
   </div>
 
