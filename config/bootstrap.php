@@ -29,4 +29,5 @@ require_once $root . '/src/Database.php';
 require_once $root . '/src/MercadoPago.php';
 require_once $root . '/src/OrderService.php';
 require_once $root . '/src/ImageOptimizer.php';
+require_once $root . '/src/ResendMailer.php';
 require_once $root . '/src/OrderNotificationService.php';
