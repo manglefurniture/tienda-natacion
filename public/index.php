@@ -109,7 +109,7 @@ function money(float $value): string
             $price = (float) $product['precio'];
             $variants = $product['variantes'] ?? [];
             $images = $product['imagenes'] ?? [];
-            $stock = $variants !== []
+            $totalStock = $variants !== []
                 ? array_sum(array_map(static fn(array $variant): int => (int) $variant['stock'], $variants))
                 : (int) $product['stock'];
             $mainImage = $images[0]['url'] ?? trim((string) ($product['imagen_url'] ?? ''));
@@ -126,7 +126,7 @@ function money(float $value): string
               <?php else: ?>
                 <div class="image-placeholder" aria-hidden="true">H</div>
               <?php endif; ?>
-              <?php if ($stock <= 0): ?><span class="stock-badge">Agotado</span><?php endif; ?>
+              <?php if ($totalStock <= 0): ?><span class="stock-badge">Agotado</span><?php endif; ?>
             </div>
 
             <?php if (count($images) > 1): ?>
@@ -152,40 +152,66 @@ function money(float $value): string
               <?php endif; ?>
 
               <?php if ($variants !== []): ?>
-                <label class="variant-picker">
-                  <span>Selecciona talla</span>
-                  <select data-variant-select <?= $stock <= 0 ? 'disabled' : '' ?>>
+                <div class="variant-picker">
+                  <span class="picker-label">Elige tu talla</span>
+                  <div class="size-options" role="radiogroup" aria-label="Talla de <?= e($product['nombre']) ?>">
+                    <?php $selectedAssigned = false; ?>
                     <?php foreach ($variants as $variant): ?>
-                      <?php $variantStock = (int) $variant['stock']; ?>
-                      <option
-                        value="<?= (int) $variant['id'] ?>"
-                        data-stock="<?= $variantStock ?>"
-                        data-label="<?= e($variant['nombre'] . ($variant['rango_mx'] ? ' · ' . $variant['rango_mx'] : '')) ?>"
+                      <?php
+                        $variantStock = (int) $variant['stock'];
+                        $isSelected = !$selectedAssigned && $variantStock > 0;
+                        if ($isSelected) {
+                            $selectedAssigned = true;
+                        }
+                      ?>
+                      <button
+                        class="size-option<?= $isSelected ? ' is-selected' : '' ?>"
+                        type="button"
+                        role="radio"
+                        aria-checked="<?= $isSelected ? 'true' : 'false' ?>"
                         <?= $variantStock <= 0 ? 'disabled' : '' ?>
+                        data-variant-option
+                        data-variant-id="<?= (int) $variant['id'] ?>"
+                        data-variant-label="<?= e($variant['nombre'] . ($variant['rango_mx'] ? ' · ' . $variant['rango_mx'] : '')) ?>"
+                        data-variant-name="<?= e($variant['nombre']) ?>"
+                        data-stock="<?= $variantStock ?>"
                       >
-                        <?= e($variant['nombre']) ?><?= $variant['rango_mx'] ? ' · ' . e($variant['rango_mx']) : '' ?> — <?= $variantStock ?> disp.
-                      </option>
+                        <strong><?= e($variant['nombre']) ?></strong>
+                        <?php if ($variant['rango_mx']): ?><small><?= e($variant['rango_mx']) ?></small><?php endif; ?>
+                        <em><?= $variantStock > 0 ? $variantStock . ' disponibles' : 'Agotada' ?></em>
+                      </button>
                     <?php endforeach; ?>
-                  </select>
-                </label>
+                  </div>
+                </div>
               <?php endif; ?>
 
-              <div class="product-footer">
-                <div>
-                  <strong><?= money($price) ?></strong>
-                  <small class="stock-copy"><?= $stock ?> en existencia</small>
+              <div class="purchase-row">
+                <div class="quantity-picker">
+                  <span class="picker-label">Cantidad</span>
+                  <div class="quantity-stepper">
+                    <button type="button" data-quantity-minus aria-label="Disminuir cantidad">−</button>
+                    <span data-quantity-value aria-live="polite">1</span>
+                    <button type="button" data-quantity-plus aria-label="Aumentar cantidad">+</button>
+                  </div>
+                  <small data-stock-status></small>
                 </div>
-                <button
-                  class="add-button"
-                  type="button"
-                  <?= $stock <= 0 ? 'disabled' : '' ?>
-                  data-add-product
-                  data-id="<?= (int) $product['id'] ?>"
-                  data-name="<?= e($product['nombre']) ?>"
-                  data-price="<?= e(number_format($price, 2, '.', '')) ?>"
-                  data-stock="<?= $stock ?>"
-                ><?= $stock <= 0 ? 'Sin stock' : 'Agregar' ?></button>
+
+                <div class="price-block">
+                  <strong><?= money($price) ?></strong>
+                  <small>por unidad</small>
+                </div>
               </div>
+
+              <button
+                class="add-button add-button-wide"
+                type="button"
+                <?= $totalStock <= 0 ? 'disabled' : '' ?>
+                data-add-product
+                data-id="<?= (int) $product['id'] ?>"
+                data-name="<?= e($product['nombre']) ?>"
+                data-price="<?= e(number_format($price, 2, '.', '')) ?>"
+                data-stock="<?= $totalStock ?>"
+              ><?= $totalStock <= 0 ? 'Sin stock' : 'Agregar al carrito' ?></button>
             </div>
           </article>
         <?php endforeach; ?>
