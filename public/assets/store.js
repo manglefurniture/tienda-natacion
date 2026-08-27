@@ -348,6 +348,10 @@
   closeButton?.addEventListener('click', closeCart);
   backdrop?.addEventListener('click', closeCart);
   toastAction?.addEventListener('click', openCart);
+  checkoutButton?.addEventListener('click', () => {
+    if (cart.length === 0) return;
+    window.location.assign('/checkout.php');
+  });
 
   window.addEventListener('scroll', () => {
     if (toast?.classList.contains('is-visible')) hideToast();
