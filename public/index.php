@@ -7,13 +7,36 @@ $products = [];
 $catalogError = false;
 
 try {
-    $stmt = Database::connection()->query(
+    $db = Database::connection();
+    $stmt = $db->query(
         'SELECT id, slug, nombre, descripcion, precio, stock, imagen_url
          FROM productos
          WHERE activo = 1
          ORDER BY id DESC'
     );
     $products = $stmt->fetchAll();
+
+    $variantStmt = $db->prepare(
+        'SELECT id, codigo, nombre, rango_mx, stock
+         FROM producto_variantes
+         WHERE producto_id = ? AND activo = 1
+         ORDER BY id ASC'
+    );
+    $imageStmt = $db->prepare(
+        'SELECT url, alt_text
+         FROM producto_imagenes
+         WHERE producto_id = ?
+         ORDER BY orden ASC, id ASC'
+    );
+
+    foreach ($products as &$product) {
+        $variantStmt->execute([(int) $product['id']]);
+        $product['variantes'] = $variantStmt->fetchAll();
+
+        $imageStmt->execute([(int) $product['id']]);
+        $product['imagenes'] = $imageStmt->fetchAll();
+    }
+    unset($product);
 } catch (Throwable $e) {
     $catalogError = true;
     error_log('[tienda-natacion] catalog error: ' . $e->getMessage());
@@ -83,26 +106,75 @@ function money(float $value): string
       <div class="product-grid">
         <?php foreach ($products as $product): ?>
           <?php
-            $stock = (int) $product['stock'];
             $price = (float) $product['precio'];
-            $image = trim((string) ($product['imagen_url'] ?? ''));
+            $variants = $product['variantes'] ?? [];
+            $images = $product['imagenes'] ?? [];
+            $stock = $variants !== []
+                ? array_sum(array_map(static fn(array $variant): int => (int) $variant['stock'], $variants))
+                : (int) $product['stock'];
+            $mainImage = $images[0]['url'] ?? trim((string) ($product['imagen_url'] ?? ''));
           ?>
-          <article class="product-card">
+          <article class="product-card" data-product-card>
             <div class="product-media">
-              <?php if ($image !== ''): ?>
-                <img src="<?= e($image) ?>" alt="<?= e($product['nombre']) ?>" loading="lazy">
+              <?php if ($mainImage !== ''): ?>
+                <img
+                  src="<?= e($mainImage) ?>"
+                  alt="<?= e($images[0]['alt_text'] ?? $product['nombre']) ?>"
+                  loading="lazy"
+                  data-main-image
+                >
               <?php else: ?>
                 <div class="image-placeholder" aria-hidden="true">H</div>
               <?php endif; ?>
               <?php if ($stock <= 0): ?><span class="stock-badge">Agotado</span><?php endif; ?>
             </div>
+
+            <?php if (count($images) > 1): ?>
+              <div class="product-thumbnails" aria-label="Más imágenes de <?= e($product['nombre']) ?>">
+                <?php foreach ($images as $index => $image): ?>
+                  <button
+                    class="product-thumbnail<?= $index === 0 ? ' is-active' : '' ?>"
+                    type="button"
+                    data-product-image="<?= e($image['url']) ?>"
+                    data-product-alt="<?= e($image['alt_text'] ?? $product['nombre']) ?>"
+                    aria-label="Ver imagen <?= $index + 1 ?> de <?= e($product['nombre']) ?>"
+                  >
+                    <img src="<?= e($image['url']) ?>" alt="" loading="lazy">
+                  </button>
+                <?php endforeach; ?>
+              </div>
+            <?php endif; ?>
+
             <div class="product-body">
               <h3><?= e($product['nombre']) ?></h3>
               <?php if (!empty($product['descripcion'])): ?>
                 <p><?= e($product['descripcion']) ?></p>
               <?php endif; ?>
+
+              <?php if ($variants !== []): ?>
+                <label class="variant-picker">
+                  <span>Selecciona talla</span>
+                  <select data-variant-select <?= $stock <= 0 ? 'disabled' : '' ?>>
+                    <?php foreach ($variants as $variant): ?>
+                      <?php $variantStock = (int) $variant['stock']; ?>
+                      <option
+                        value="<?= (int) $variant['id'] ?>"
+                        data-stock="<?= $variantStock ?>"
+                        data-label="<?= e($variant['nombre'] . ($variant['rango_mx'] ? ' · ' . $variant['rango_mx'] : '')) ?>"
+                        <?= $variantStock <= 0 ? 'disabled' : '' ?>
+                      >
+                        <?= e($variant['nombre']) ?><?= $variant['rango_mx'] ? ' · ' . e($variant['rango_mx']) : '' ?> — <?= $variantStock ?> disp.
+                      </option>
+                    <?php endforeach; ?>
+                  </select>
+                </label>
+              <?php endif; ?>
+
               <div class="product-footer">
-                <strong><?= money($price) ?></strong>
+                <div>
+                  <strong><?= money($price) ?></strong>
+                  <small class="stock-copy"><?= $stock ?> en existencia</small>
+                </div>
                 <button
                   class="add-button"
                   type="button"
@@ -133,7 +205,7 @@ function money(float $value): string
   <div class="cart-summary">
     <div><span>Total</span><strong id="cartTotal">$0.00</strong></div>
     <button type="button" class="checkout-button" disabled>Pago en línea · siguiente etapa</button>
-    <small>El precio y el stock se validarán nuevamente antes de pagar.</small>
+    <small>El precio, la talla y el stock se validarán nuevamente antes de pagar.</small>
   </div>
 </aside>
 
