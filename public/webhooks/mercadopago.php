@@ -55,8 +55,18 @@ try {
         exit;
     }
 
+    $db = Database::connection();
     $payment = (new MercadoPago())->getPayment($dataId);
-    OrderService::applyPayment(Database::connection(), $payment);
+    $orderId = OrderService::applyPayment($db, $payment);
+
+    if ($orderId !== null && (string) ($payment['status'] ?? '') === 'approved') {
+        try {
+            OrderNotificationService::notifyPaidOrder($db, $orderId);
+        } catch (Throwable $notificationError) {
+            error_log('[tienda-natacion][order-notification] ' . $notificationError->getMessage());
+        }
+    }
+
     http_response_code(200);
 } catch (Throwable $e) {
     error_log('[tienda-natacion][mercadopago-webhook] ' . $e->getMessage());
