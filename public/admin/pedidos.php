@@ -38,7 +38,7 @@ function order_state_label(string $state): string
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Pedidos | Administración</title>
   <link rel="stylesheet" href="/admin/admin.css?v=1">
-  <link rel="stylesheet" href="/admin/admin-extra.css?v=1">
+  <link rel="stylesheet" href="/admin/admin-extra.css?v=2">
 </head>
 <body>
 <header class="admin-header">
