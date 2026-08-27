@@ -26,3 +26,12 @@ function env(string $key, ?string $default = null): ?string
 }
 
 require_once $root . '/src/Database.php';
+require_once $root . '/src/MercadoPago.php';
+require_once $root . '/src/OrderService.php';
+require_once $root . '/src/ImageOptimizer.php';
+
+$requestUri = (string) ($_SERVER['REQUEST_URI'] ?? '');
+if (str_starts_with($requestUri, '/admin')) {
+    $uploadDirectory = (string) env('UPLOAD_DIR', $root . '/public/uploads/productos');
+    ImageOptimizer::optimizeDirectory($uploadDirectory);
+}
