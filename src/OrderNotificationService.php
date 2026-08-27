@@ -38,16 +38,13 @@ final class OrderNotificationService
             $itemsStmt->execute([$orderId]);
             $items = $itemsStmt->fetchAll();
 
-            $from = trim((string) env('ORDER_NOTIFICATION_FROM', 'noreply@tienda.hnatacion.com'));
+            $from = trim((string) env('ORDER_NOTIFICATION_FROM', 'notificaciones@hnatacion.com'));
             if (filter_var($from, FILTER_VALIDATE_EMAIL) === false) {
-                $from = 'noreply@tienda.hnatacion.com';
+                throw new RuntimeException('El remitente de notificaciones no es válido.');
             }
+            $fromName = trim((string) env('ORDER_NOTIFICATION_FROM_NAME', 'Hache Natación Tienda'));
 
-            $subjectText = 'Nueva venta pagada · ' . (string) $order['numero_pedido'];
-            $subject = function_exists('mb_encode_mimeheader')
-                ? mb_encode_mimeheader($subjectText, 'UTF-8')
-                : $subjectText;
-
+            $subject = 'Nueva venta pagada · ' . (string) $order['numero_pedido'];
             $lines = [
                 'Nueva venta pagada en Hache Natación Tienda',
                 '',
@@ -77,17 +74,13 @@ final class OrderNotificationService
             $lines[] = '';
             $lines[] = 'Abrir pedido: ' . $appUrl . '/admin/pedido.php?id=' . $orderId;
 
-            $headers = [
-                'From: Hache Natación Tienda <' . $from . '>',
-                'MIME-Version: 1.0',
-                'Content-Type: text/plain; charset=UTF-8',
-                'X-Mailer: HacheNatacionTienda',
-            ];
-
-            $sent = @mail($to, $subject, implode("\r\n", $lines), implode("\r\n", $headers));
-            if (!$sent) {
-                throw new RuntimeException('El servidor no pudo enviar el correo de notificación.');
-            }
+            ResendMailer::sendText(
+                $to,
+                $from,
+                $fromName !== '' ? $fromName : 'Hache Natación Tienda',
+                $subject,
+                implode("\r\n", $lines)
+            );
 
             return true;
         } catch (Throwable $e) {
