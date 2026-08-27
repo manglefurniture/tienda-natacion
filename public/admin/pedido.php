@@ -24,11 +24,22 @@ $flash = admin_take_flash();
 
 $state = (string) $order['estado'];
 $stateLabel = match ($state) {
-    'paid' => 'Pagado',
+    'paid' => 'Listo para entregar',
     'completed' => 'Entregado',
     'cancelled' => 'Cancelado',
     default => 'Pendiente de pago',
 };
+
+function payment_state_label(string $state): string
+{
+    return match ($state) {
+        'approved' => 'Aprobado',
+        'rejected' => 'Rechazado',
+        'cancelled' => 'Cancelado',
+        'refunded' => 'Reembolsado',
+        default => ucfirst($state),
+    };
+}
 ?>
 <!doctype html>
 <html lang="es">
@@ -38,7 +49,7 @@ $stateLabel = match ($state) {
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title><?= admin_e($order['numero_pedido']) ?> | Pedido</title>
   <link rel="stylesheet" href="/admin/admin.css?v=1">
-  <link rel="stylesheet" href="/admin/admin-extra.css?v=1">
+  <link rel="stylesheet" href="/admin/admin-extra.css?v=3">
 </head>
 <body>
 <header class="admin-header">
@@ -52,6 +63,13 @@ $stateLabel = match ($state) {
     <div><span class="admin-eyebrow">Pedido</span><h1><?= admin_e($order['numero_pedido']) ?></h1><p><?= admin_e(date('d/m/Y H:i', strtotime((string) $order['creado_en']))) ?></p></div>
     <span class="status-pill order-status order-status-<?= admin_e($state === 'pending_payment' ? 'pending' : $state) ?>"><?= admin_e($stateLabel) ?></span>
   </section>
+
+  <?php if ($state === 'paid'): ?>
+    <div class="ready-banner">
+      <div><strong>Pago confirmado</strong><span>Este pedido ya puede prepararse para entrega.</span></div>
+      <?php if (!empty($order['notificacion_pago_en'])): ?><span class="ready-banner-note">Aviso de venta enviado</span><?php endif; ?>
+    </div>
+  <?php endif; ?>
 
   <?php if ($flash !== null): ?>
     <div class="admin-alert <?= ($flash['type'] ?? '') === 'error' ? 'admin-alert-error' : 'admin-alert-success' ?>"><?= admin_e((string) ($flash['message'] ?? '')) ?></div>
@@ -80,8 +98,10 @@ $stateLabel = match ($state) {
       <?php if ($payments !== []): ?>
         <h2 style="margin-top:24px">Pago</h2>
         <?php foreach ($payments as $payment): ?>
-          <div class="order-summary-row"><span><?= admin_e($payment['proveedor']) ?></span><strong><?= admin_e($payment['proveedor_estado'] ?: $payment['estado']) ?></strong></div>
-          <div class="order-summary-row"><span>ID</span><strong><?= admin_e($payment['proveedor_pago_id'] ?: '—') ?></strong></div>
+          <?php $providerState = (string) ($payment['proveedor_estado'] ?: $payment['estado']); ?>
+          <div class="order-summary-row"><span><?= admin_e(ucfirst((string) $payment['proveedor'])) ?></span><strong><?= admin_e(payment_state_label($providerState)) ?></strong></div>
+          <div class="order-summary-row"><span>Importe</span><strong>$<?= number_format((float) $payment['importe'], 2) ?> <?= admin_e((string) $payment['moneda']) ?></strong></div>
+          <div class="order-summary-row"><span>ID de pago</span><strong class="payment-id"><?= admin_e($payment['proveedor_pago_id'] ?: '—') ?></strong></div>
         <?php endforeach; ?>
       <?php endif; ?>
 
