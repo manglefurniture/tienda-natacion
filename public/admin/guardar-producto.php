@@ -27,7 +27,7 @@ $active = isset($_POST['activo']) ? 1 : 0;
 $usesVariants = isset($_POST['usa_variantes']);
 $simpleStock = max(0, (int) ($_POST['stock_simple'] ?? 0));
 
-if ($name === '' || mb_strlen($name, 'UTF-8') > 180) {
+if ($name === '' || strlen($name) > 360) {
     admin_flash('error', 'Escribe un nombre válido para el producto.');
     admin_redirect($returnUrl);
 }
@@ -35,7 +35,7 @@ if ($price < 0 || $price > 99999999.99) {
     admin_flash('error', 'El precio no es válido.');
     admin_redirect($returnUrl);
 }
-if ($sku !== null && mb_strlen($sku, 'UTF-8') > 64) {
+if ($sku !== null && strlen($sku) > 64) {
     admin_flash('error', 'El SKU es demasiado largo.');
     admin_redirect($returnUrl);
 }
@@ -109,7 +109,7 @@ try {
             if ($variantName === '') {
                 continue;
             }
-            if (mb_strlen($variantName, 'UTF-8') > 80 || ($variantRange !== null && mb_strlen($variantRange, 'UTF-8') > 80)) {
+            if (strlen($variantName) > 160 || ($variantRange !== null && strlen($variantRange) > 160)) {
                 throw new RuntimeException('Una de las variantes tiene un texto demasiado largo.');
             }
 
@@ -117,7 +117,6 @@ try {
             $variantStockTotal += $variantStock;
 
             if ($variantId > 0 && isset($existingVariantMap[$variantId])) {
-                $code = $existingVariantMap[$variantId];
                 $updateVariant = $db->prepare(
                     'UPDATE producto_variantes
                      SET nombre = ?, rango_mx = ?, stock = ?, activo = 1
