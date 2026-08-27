@@ -137,3 +137,7 @@ function admin_uploaded_file_path(string $url): ?string
     $name = basename($url);
     return admin_upload_dir() . '/' . $name;
 }
+
+if (admin_is_authenticated()) {
+    ImageOptimizer::optimizeDirectory(admin_upload_dir());
+}
