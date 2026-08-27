@@ -51,6 +51,9 @@ function money(float $value): string
 {
     return '$' . number_format($value, 2, '.', ',');
 }
+
+$cssVersion = (string) (@filemtime(__DIR__ . '/assets/store.css') ?: time());
+$jsVersion = (string) (@filemtime(__DIR__ . '/assets/store.js') ?: time());
 ?>
 <!doctype html>
 <html lang="es">
@@ -60,7 +63,7 @@ function money(float $value): string
   <meta name="theme-color" content="#123b5d">
   <meta name="description" content="Tienda oficial de Hache Natación. Accesorios y productos para natación en Cancún.">
   <title>Tienda | Hache Natación</title>
-  <link rel="stylesheet" href="/assets/store.css">
+  <link rel="stylesheet" href="/assets/store.css?v=<?= e($cssVersion) ?>">
 </head>
 <body>
 <header class="site-header">
@@ -240,6 +243,6 @@ function money(float $value): string
   <span>Natación en Cancún · México</span>
 </footer>
 
-<script src="/assets/store.js" defer></script>
+<script src="/assets/store.js?v=<?= e($jsVersion) ?>" defer></script>
 </body>
 </html>
