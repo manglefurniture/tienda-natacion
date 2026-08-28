@@ -18,8 +18,6 @@ final class PaymentGatewayConfig
             $stmt->execute([self::PROVIDER_MERCADO_PAGO]);
             $row = $stmt->fetch();
         } catch (PDOException $e) {
-            // Compatibilidad durante despliegue: si la migración aún no se aplicó,
-            // el checkout sigue usando las variables actuales de entorno.
             if (self::isMissingTableError($e)) {
                 return $fallback;
             }
@@ -40,10 +38,10 @@ final class PaymentGatewayConfig
                 ? (string) $row['ambiente']
                 : 'PRODUCTION',
             'public_key' => trim((string) ($row['public_key'] ?? '')),
-            'access_token' => $accessToken !== '' ? $accessToken : $fallback['access_token'],
-            'webhook_secret' => $webhookSecret !== '' ? $webhookSecret : $fallback['webhook_secret'],
-            'configured_access_token' => $accessToken !== '' || $fallback['access_token'] !== '',
-            'configured_webhook_secret' => $webhookSecret !== '' || $fallback['webhook_secret'] !== '',
+            'access_token' => $accessToken,
+            'webhook_secret' => $webhookSecret,
+            'configured_access_token' => $accessToken !== '',
+            'configured_webhook_secret' => $webhookSecret !== '',
             'source' => 'database',
             'updated_at' => $row['updated_at'] ?? null,
         ];
@@ -53,7 +51,7 @@ final class PaymentGatewayConfig
     {
         $environment = strtoupper(trim((string) ($input['environment'] ?? 'PRODUCTION')));
         if (!in_array($environment, ['TEST', 'PRODUCTION'], true)) {
-            throw new InvalidArgumentException('El ambiente de Mercado Pago no es válido.');
+            throw new InvalidArgumentException('El modo de credenciales de Mercado Pago no es válido.');
         }
 
         $publicKey = trim((string) ($input['public_key'] ?? ''));
@@ -72,6 +70,10 @@ final class PaymentGatewayConfig
         $encryptedAccessToken = $existing['access_token_enc'] ?? null;
         $encryptedWebhookSecret = $existing['webhook_secret_enc'] ?? null;
 
+        if ($accessToken !== '' && $webhookSecret === '') {
+            throw new InvalidArgumentException('Al cambiar el Access Token, ingresa también el Webhook Secret de esa integración.');
+        }
+
         if ($accessToken !== '') {
             $encryptedAccessToken = self::encrypt($accessToken);
         }
@@ -79,8 +81,11 @@ final class PaymentGatewayConfig
             $encryptedWebhookSecret = self::encrypt($webhookSecret);
         }
 
-        if ($active === 1 && trim((string) $encryptedAccessToken) === '' && trim((string) env('MERCADOPAGO_ACCESS_TOKEN')) === '') {
+        if ($active === 1 && trim((string) $encryptedAccessToken) === '') {
             throw new InvalidArgumentException('Agrega un Access Token antes de activar Mercado Pago.');
+        }
+        if ($active === 1 && trim((string) $encryptedWebhookSecret) === '') {
+            throw new InvalidArgumentException('Agrega un Webhook Secret antes de activar Mercado Pago.');
         }
 
         $stmt = $db->prepare(
@@ -145,6 +150,9 @@ final class PaymentGatewayConfig
         }
         $key = self::encryptionKey();
         $ivLength = openssl_cipher_iv_length(self::CIPHER);
+        if (!is_int($ivLength) || $ivLength <= 0) {
+            throw new RuntimeException('No se pudo inicializar el cifrado de credenciales.');
+        }
         $iv = random_bytes($ivLength);
         $tag = '';
         $cipherText = openssl_encrypt($plainText, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv, $tag);
@@ -201,8 +209,6 @@ final class PaymentGatewayConfig
 
     private static function isMissingTableError(PDOException $e): bool
     {
-        $code = (string) $e->getCode();
-        $message = strtolower($e->getMessage());
-        return $code === '42S02' || str_contains($message, 'pasarelas_pago_config');
+        return (string) $e->getCode() === '42S02';
     }
 }
