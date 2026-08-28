@@ -6,10 +6,18 @@ require_once dirname(__DIR__, 2) . '/config/bootstrap.php';
 $db = Database::connection();
 $orderNumber = trim((string) ($_GET['pedido'] ?? $_GET['external_reference'] ?? ''));
 $paymentId = trim((string) ($_GET['payment_id'] ?? $_GET['collection_id'] ?? ''));
+$accessToken = '';
 
-if ($orderNumber !== '' && $paymentId !== '' && trim((string) env('MERCADOPAGO_ACCESS_TOKEN')) !== '') {
+try {
+    $gateway = PaymentGatewayConfig::mercadoPago($db);
+    $accessToken = trim((string) ($gateway['access_token'] ?? ''));
+} catch (Throwable $e) {
+    error_log('[tienda-natacion][payment-return-config] ' . $e->getMessage());
+}
+
+if ($orderNumber !== '' && $paymentId !== '' && $accessToken !== '') {
     try {
-        $payment = (new MercadoPago())->getPayment($paymentId);
+        $payment = (new MercadoPago($accessToken))->getPayment($paymentId);
         OrderService::applyPayment($db, $payment);
     } catch (Throwable $e) {
         error_log('[tienda-natacion][payment-return] ' . $e->getMessage());
