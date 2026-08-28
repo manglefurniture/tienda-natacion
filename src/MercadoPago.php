@@ -28,6 +28,11 @@ final class MercadoPago
         return $this->request('GET', '/v1/payments/' . rawurlencode($paymentId));
     }
 
+    public function getCurrentUser(): array
+    {
+        return $this->request('GET', '/users/me');
+    }
+
     private function request(string $method, string $path, ?array $payload = null): array
     {
         $url = $this->baseUrl . $path;

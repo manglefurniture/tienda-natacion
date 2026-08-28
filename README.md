@@ -17,6 +17,7 @@ https://tienda.hnatacion.com
 - Checkout protegido en servidor con reservas de stock.
 - Checkout Pro de Mercado Pago mediante Preferences API.
 - Webhook firmado de Mercado Pago en `/webhooks/mercadopago.php`.
+- Configuración administrable de Mercado Pago en `/admin/pasarelas.php`, con secretos cifrados y versionados en base de datos.
 
 ## Migraciones
 
@@ -25,21 +26,51 @@ Aplicar en orden:
 1. `database/001_initial_schema.sql`
 2. `database/002_product_variants_and_aletas.sql`
 3. `database/003_checkout_orders.sql`
+4. `database/004_order_notifications.sql`
+5. `database/005_payment_gateway_config.sql`
+
+La migración `005` crea un historial inmutable de credenciales y agrega `mp_credencial_id` a cada pedido. Una versión histórica no se borra mientras un pedido la referencie.
 
 ## Variables de producción
 
 Además de las credenciales de base de datos y administración, producción requiere:
 
-- `MERCADOPAGO_ACCESS_TOKEN`
-- `MERCADOPAGO_WEBHOOK_SECRET`
+- `PAYMENT_GATEWAY_CONFIG_KEY`: clave aleatoria larga y estable usada únicamente en el servidor para cifrar Access Token y Webhook Secret guardados desde el panel.
 - `UPLOAD_DIR`
 - `UPLOAD_URL`
 
-`MERCADOPAGO_PUBLIC_KEY` queda disponible para futuras integraciones frontend, pero Checkout Pro por redirección no la necesita para crear preferencias desde el servidor.
+Durante la transición siguen siendo compatibles:
+
+- `MERCADOPAGO_ACCESS_TOKEN`
+- `MERCADOPAGO_PUBLIC_KEY`
+- `MERCADOPAGO_WEBHOOK_SECRET`
+
+Mientras Mercado Pago no se haya guardado desde `/admin/pasarelas.php`, checkout y webhook siguen leyendo esas variables antiguas. En el primer guardado, la aplicación conserva las credenciales legacy como una versión histórica y vincula a ella los pedidos previos. Después de esa transición, la base de datos pasa a ser la fuente de credenciales.
+
+## Versionado de credenciales
+
+Cada cambio efectivo de Access Token, Webhook Secret, Public Key o tipo de credenciales crea una versión nueva. La configuración solo apunta a cuál es la versión actual; las anteriores permanecen cifradas para poder procesar correctamente eventos posteriores de pedidos antiguos.
+
+Cada pedido guarda la versión con la que se creó. El retorno del checkout usa esa versión específica. El webhook evalúa las versiones históricas hasta encontrar la firma correcta y usa el Access Token de esa misma versión para consultar el pago. Así, reembolsos y contracargos siguen funcionando aunque la cuenta activa haya cambiado después.
+
+El checkout toma un lock compartido sobre la configuración mientras crea el pedido y el cambio de configuración usa un lock exclusivo. Esto serializa la transición inicial desde `.env` y evita que un pedido quede entre dos versiones.
+
+## Cambio de cuenta de Mercado Pago
+
+1. Aplica `database/005_payment_gateway_config.sql`.
+2. Define una sola vez `PAYMENT_GATEWAY_CONFIG_KEY` en el `.env` del servidor. No la cambies después de guardar credenciales o no podrán descifrarse.
+3. Entra a `/admin/pasarelas.php`.
+4. Pega juntos el nuevo Access Token y el Webhook Secret de la misma integración. Si cambias el Access Token, el panel exige también el Webhook Secret.
+5. Marca si las credenciales son de pruebas o producción y prueba la conexión.
+6. Guarda la configuración. La versión anterior se conserva automáticamente para los pedidos que la usaron.
+
+En modo `TEST`, checkout usa `sandbox_init_point`; en `PRODUCTION`, usa `init_point`. Las credenciales deben corresponder al mismo tipo seleccionado.
+
+La URL del webhook permanece en `/webhooks/mercadopago.php`; al cambiar de aplicación/cuenta, registra esa misma URL en Mercado Pago y copia el nuevo secreto al panel.
 
 ## Stock y pedidos
 
-Al iniciar un checkout el servidor vuelve a validar precio, producto, variante y existencias. El stock queda reservado temporalmente antes de abrir Mercado Pago. Las reservas vencidas pueden liberarse con:
+Al iniciar un checkout el servidor vuelve a validar precio, producto, variante y existencias. El stock queda reservado temporalmente antes de abrir Mercado Pago. La preferencia de Mercado Pago vence junto con la reserva a los 45 minutos. Las reservas vencidas pueden liberarse con:
 
 ```bash
 php bin/release-expired-reservations.php

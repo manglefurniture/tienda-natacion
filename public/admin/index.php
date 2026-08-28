@@ -34,6 +34,7 @@ $flash = admin_take_flash();
   <nav class="admin-nav">
     <a class="is-active" href="/admin/">Productos</a>
     <a href="/admin/pedidos.php">Pedidos<?= $pendingOrders + $paidOrders > 0 ? ' · ' . ($pendingOrders + $paidOrders) : '' ?></a>
+    <a href="/admin/pasarelas.php">Pagos</a>
   </nav>
   <div class="admin-header-actions">
     <a class="admin-secondary-button" href="/" target="_blank" rel="noopener">Ver tienda</a>
