@@ -8,12 +8,222 @@ final class PaymentGatewayConfig
 
     public static function mercadoPago(PDO $db): array
     {
+        return self::mercadoPagoInternal($db, false);
+    }
+
+    public static function mercadoPagoForCheckout(PDO $db): array
+    {
+        return self::mercadoPagoInternal($db, true);
+    }
+
+    public static function credentialById(PDO $db, int $credentialId): array
+    {
+        if ($credentialId <= 0) {
+            throw new InvalidArgumentException('La versión de credenciales no es válida.');
+        }
+
+        $stmt = $db->prepare(
+            'SELECT id, proveedor, ambiente, public_key, access_token_enc, webhook_secret_enc,
+                    cuenta_id, cuenta_label, created_at
+             FROM pasarelas_pago_credenciales
+             WHERE id = ? AND proveedor = ? LIMIT 1'
+        );
+        $stmt->execute([$credentialId, self::PROVIDER_MERCADO_PAGO]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            throw new RuntimeException('No se encontró la versión de credenciales de Mercado Pago.');
+        }
+        return self::hydrateCredential($row, false, 'database-history');
+    }
+
+    public static function mercadoPagoCredentialCandidates(PDO $db): array
+    {
         $fallback = self::mercadoPagoFromEnvironment();
 
         try {
+            $configStmt = $db->prepare(
+                'SELECT configurado, credencial_actual_id FROM pasarelas_pago_config
+                 WHERE proveedor = ? LIMIT 1'
+            );
+            $configStmt->execute([self::PROVIDER_MERCADO_PAGO]);
+            $config = $configStmt->fetch();
+        } catch (PDOException $e) {
+            if (self::isMissingTableError($e)) {
+                return $fallback['access_token'] !== '' && $fallback['webhook_secret'] !== '' ? [$fallback] : [];
+            }
+            throw $e;
+        }
+
+        if (!$config || (int) ($config['configurado'] ?? 0) !== 1) {
+            return $fallback['access_token'] !== '' && $fallback['webhook_secret'] !== '' ? [$fallback] : [];
+        }
+
+        $currentId = (int) ($config['credencial_actual_id'] ?? 0);
+        $stmt = $db->prepare(
+            'SELECT id, proveedor, ambiente, public_key, access_token_enc, webhook_secret_enc,
+                    cuenta_id, cuenta_label, created_at
+             FROM pasarelas_pago_credenciales
+             WHERE proveedor = ?
+             ORDER BY (id = ?) DESC, id DESC'
+        );
+        $stmt->execute([self::PROVIDER_MERCADO_PAGO, $currentId]);
+
+        $credentials = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $credentials[] = self::hydrateCredential($row, (int) $row['id'] === $currentId, 'database-history');
+        }
+        return $credentials;
+    }
+
+    public static function saveMercadoPago(PDO $db, array $input, string $actor): void
+    {
+        $environment = strtoupper(trim((string) ($input['environment'] ?? 'PRODUCTION')));
+        if (!in_array($environment, ['TEST', 'PRODUCTION'], true)) {
+            throw new InvalidArgumentException('El modo de credenciales de Mercado Pago no es válido.');
+        }
+
+        $publicKey = trim((string) ($input['public_key'] ?? ''));
+        $postedAccessToken = trim((string) ($input['access_token'] ?? ''));
+        $postedWebhookSecret = trim((string) ($input['webhook_secret'] ?? ''));
+        $accountId = trim((string) ($input['account_id'] ?? ''));
+        $accountLabel = trim((string) ($input['account_label'] ?? ''));
+        $active = !empty($input['active']) ? 1 : 0;
+        $actor = mb_substr($actor, 0, 120, 'UTF-8');
+
+        if (mb_strlen($publicKey, 'UTF-8') > 255) {
+            throw new InvalidArgumentException('La Public Key es demasiado larga.');
+        }
+        if (mb_strlen($postedAccessToken, 'UTF-8') > 1000 || mb_strlen($postedWebhookSecret, 'UTF-8') > 1000) {
+            throw new InvalidArgumentException('Una credencial es demasiado larga.');
+        }
+        if (mb_strlen($accountId, 'UTF-8') > 80 || mb_strlen($accountLabel, 'UTF-8') > 190) {
+            throw new InvalidArgumentException('Los datos de la cuenta de Mercado Pago son demasiado largos.');
+        }
+        if ($postedAccessToken !== '' && $postedWebhookSecret === '') {
+            throw new InvalidArgumentException('Al cambiar el Access Token, ingresa también el Webhook Secret de esa integración.');
+        }
+
+        $ownTransaction = !$db->inTransaction();
+        if ($ownTransaction) {
+            $db->beginTransaction();
+        }
+
+        try {
+            $configStmt = $db->prepare(
+                'SELECT proveedor, configurado, activo, credencial_actual_id
+                 FROM pasarelas_pago_config WHERE proveedor = ? FOR UPDATE'
+            );
+            $configStmt->execute([self::PROVIDER_MERCADO_PAGO]);
+            $config = $configStmt->fetch();
+            if (!$config) {
+                throw new RuntimeException('La migración de configuración de pagos no está aplicada.');
+            }
+
+            $fallback = self::mercadoPagoFromEnvironment();
+            $currentCredentialId = (int) ($config['credencial_actual_id'] ?? 0);
+            $current = null;
+
+            if ((int) ($config['configurado'] ?? 0) !== 1 && $currentCredentialId <= 0
+                && $fallback['access_token'] !== '' && $fallback['webhook_secret'] !== '') {
+                $currentCredentialId = self::insertCredential(
+                    $db,
+                    $fallback['environment'],
+                    $fallback['public_key'],
+                    $fallback['access_token'],
+                    $fallback['webhook_secret'],
+                    '',
+                    'Credenciales legacy (.env)',
+                    $actor !== '' ? $actor : 'legacy-env'
+                );
+
+                // Todo pedido previo o checkout que ya alcanzó a crearse con el .env
+                // queda ligado a la versión legacy antes de activar una versión nueva.
+                $assignLegacy = $db->prepare(
+                    'UPDATE pedidos SET mp_credencial_id = ? WHERE mp_credencial_id IS NULL'
+                );
+                $assignLegacy->execute([$currentCredentialId]);
+                $current = self::credentialById($db, $currentCredentialId);
+            } elseif ($currentCredentialId > 0) {
+                $current = self::credentialById($db, $currentCredentialId);
+            }
+
+            $currentAccessToken = trim((string) ($current['access_token'] ?? $fallback['access_token']));
+            $currentWebhookSecret = trim((string) ($current['webhook_secret'] ?? $fallback['webhook_secret']));
+            $effectiveAccessToken = $postedAccessToken !== '' ? $postedAccessToken : $currentAccessToken;
+            $effectiveWebhookSecret = $postedWebhookSecret !== '' ? $postedWebhookSecret : $currentWebhookSecret;
+
+            if ($active === 1 && $effectiveAccessToken === '') {
+                throw new InvalidArgumentException('Agrega un Access Token antes de activar Mercado Pago.');
+            }
+            if ($active === 1 && $effectiveWebhookSecret === '') {
+                throw new InvalidArgumentException('Agrega un Webhook Secret antes de activar Mercado Pago.');
+            }
+
+            $currentEnvironment = strtoupper(trim((string) ($current['environment'] ?? $fallback['environment'])));
+            $currentPublicKey = trim((string) ($current['public_key'] ?? $fallback['public_key']));
+            $credentialsChanged = $currentCredentialId <= 0
+                || !self::sameSecret($currentAccessToken, $effectiveAccessToken)
+                || !self::sameSecret($currentWebhookSecret, $effectiveWebhookSecret)
+                || $currentEnvironment !== $environment
+                || $currentPublicKey !== $publicKey;
+
+            if ($credentialsChanged) {
+                if ($effectiveAccessToken === '' || $effectiveWebhookSecret === '') {
+                    throw new InvalidArgumentException('Completa Access Token y Webhook Secret para crear la nueva versión.');
+                }
+
+                $currentCredentialId = self::insertCredential(
+                    $db,
+                    $environment,
+                    $publicKey,
+                    $effectiveAccessToken,
+                    $effectiveWebhookSecret,
+                    $accountId !== '' ? $accountId : (string) ($current['account_id'] ?? ''),
+                    $accountLabel !== '' ? $accountLabel : (string) ($current['account_label'] ?? ''),
+                    $actor
+                );
+            }
+
+            if ($active === 1 && $currentCredentialId <= 0) {
+                throw new RuntimeException('No existe una versión válida de credenciales para activar Mercado Pago.');
+            }
+
+            $update = $db->prepare(
+                'UPDATE pasarelas_pago_config
+                 SET configurado = 1, activo = ?, credencial_actual_id = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE proveedor = ?'
+            );
+            $update->execute([
+                $active,
+                $currentCredentialId > 0 ? $currentCredentialId : null,
+                $actor,
+                self::PROVIDER_MERCADO_PAGO,
+            ]);
+
+            if ($ownTransaction) {
+                $db->commit();
+            }
+        } catch (Throwable $e) {
+            if ($ownTransaction && $db->inTransaction()) {
+                $db->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    private static function mercadoPagoInternal(PDO $db, bool $lockForCheckout): array
+    {
+        $fallback = self::mercadoPagoFromEnvironment();
+        $lockClause = $lockForCheckout && $db->inTransaction() ? ' LOCK IN SHARE MODE' : '';
+
+        try {
             $stmt = $db->prepare(
-                'SELECT proveedor, configurado, activo, ambiente, public_key, access_token_enc, webhook_secret_enc, updated_at
-                 FROM pasarelas_pago_config WHERE proveedor = ? LIMIT 1'
+                'SELECT c.proveedor, c.configurado, c.activo, c.credencial_actual_id, c.updated_at,
+                        v.id, v.ambiente, v.public_key, v.access_token_enc, v.webhook_secret_enc,
+                        v.cuenta_id, v.cuenta_label, v.created_at
+                 FROM pasarelas_pago_config c
+                 LEFT JOIN pasarelas_pago_credenciales v ON v.id = c.credencial_actual_id
+                 WHERE c.proveedor = ? LIMIT 1' . $lockClause
             );
             $stmt->execute([self::PROVIDER_MERCADO_PAGO]);
             $row = $stmt->fetch();
@@ -28,13 +238,39 @@ final class PaymentGatewayConfig
             return $fallback;
         }
 
+        if ((int) ($row['credencial_actual_id'] ?? 0) <= 0 || empty($row['id'])) {
+            return [
+                'provider' => self::PROVIDER_MERCADO_PAGO,
+                'credential_id' => null,
+                'active' => false,
+                'environment' => 'PRODUCTION',
+                'public_key' => '',
+                'access_token' => '',
+                'webhook_secret' => '',
+                'configured_access_token' => false,
+                'configured_webhook_secret' => false,
+                'source' => 'database',
+                'updated_at' => $row['updated_at'] ?? null,
+                'account_id' => '',
+                'account_label' => '',
+            ];
+        }
+
+        $credential = self::hydrateCredential($row, true, 'database');
+        $credential['active'] = (int) $row['activo'] === 1;
+        $credential['updated_at'] = $row['updated_at'] ?? null;
+        return $credential;
+    }
+
+    private static function hydrateCredential(array $row, bool $active, string $source): array
+    {
         $accessToken = self::decryptOptional((string) ($row['access_token_enc'] ?? ''));
         $webhookSecret = self::decryptOptional((string) ($row['webhook_secret_enc'] ?? ''));
-
         return [
             'provider' => self::PROVIDER_MERCADO_PAGO,
-            'active' => (int) $row['activo'] === 1,
-            'environment' => in_array((string) $row['ambiente'], ['TEST', 'PRODUCTION'], true)
+            'credential_id' => (int) ($row['id'] ?? 0) ?: null,
+            'active' => $active,
+            'environment' => in_array((string) ($row['ambiente'] ?? ''), ['TEST', 'PRODUCTION'], true)
                 ? (string) $row['ambiente']
                 : 'PRODUCTION',
             'public_key' => trim((string) ($row['public_key'] ?? '')),
@@ -42,95 +278,44 @@ final class PaymentGatewayConfig
             'webhook_secret' => $webhookSecret,
             'configured_access_token' => $accessToken !== '',
             'configured_webhook_secret' => $webhookSecret !== '',
-            'source' => 'database',
-            'updated_at' => $row['updated_at'] ?? null,
+            'source' => $source,
+            'updated_at' => $row['created_at'] ?? null,
+            'account_id' => trim((string) ($row['cuenta_id'] ?? '')),
+            'account_label' => trim((string) ($row['cuenta_label'] ?? '')),
         ];
     }
 
-    public static function saveMercadoPago(PDO $db, array $input, string $actor): void
-    {
-        $environment = strtoupper(trim((string) ($input['environment'] ?? 'PRODUCTION')));
-        if (!in_array($environment, ['TEST', 'PRODUCTION'], true)) {
-            throw new InvalidArgumentException('El modo de credenciales de Mercado Pago no es válido.');
-        }
-
-        $publicKey = trim((string) ($input['public_key'] ?? ''));
-        $accessToken = trim((string) ($input['access_token'] ?? ''));
-        $webhookSecret = trim((string) ($input['webhook_secret'] ?? ''));
-        $active = !empty($input['active']) ? 1 : 0;
-
-        if (mb_strlen($publicKey, 'UTF-8') > 255) {
-            throw new InvalidArgumentException('La Public Key es demasiado larga.');
-        }
-        if (mb_strlen($accessToken, 'UTF-8') > 1000 || mb_strlen($webhookSecret, 'UTF-8') > 1000) {
-            throw new InvalidArgumentException('Una credencial es demasiado larga.');
-        }
-
-        $current = self::mercadoPago($db);
-        $currentAccessToken = trim((string) ($current['access_token'] ?? ''));
-        $currentWebhookSecret = trim((string) ($current['webhook_secret'] ?? ''));
-
-        $existing = self::mercadoPagoRow($db);
-        $encryptedAccessToken = $existing['access_token_enc'] ?? null;
-        $encryptedWebhookSecret = $existing['webhook_secret_enc'] ?? null;
-
-        if ($accessToken !== '' && $webhookSecret === '') {
-            throw new InvalidArgumentException('Al cambiar el Access Token, ingresa también el Webhook Secret de esa integración.');
-        }
-
-        $accessTokenChanges = $accessToken !== ''
-            && ($currentAccessToken === '' || !hash_equals($currentAccessToken, $accessToken));
-        $webhookSecretChanges = $webhookSecret !== ''
-            && ($currentWebhookSecret === '' || !hash_equals($currentWebhookSecret, $webhookSecret));
-
-        if (($accessTokenChanges || $webhookSecretChanges) && self::hasPayablePreferences($db)) {
-            throw new RuntimeException(
-                'Hay pagos de Mercado Pago todavía en curso. Espera a que se confirmen o venza su preferencia antes de cambiar credenciales.'
-            );
-        }
-
-        if ($accessToken !== '') {
-            $encryptedAccessToken = self::encrypt($accessToken);
-        }
-        if ($webhookSecret !== '') {
-            $encryptedWebhookSecret = self::encrypt($webhookSecret);
-        }
-
-        if ($active === 1 && trim((string) $encryptedAccessToken) === '') {
-            throw new InvalidArgumentException('Agrega un Access Token antes de activar Mercado Pago.');
-        }
-        if ($active === 1 && trim((string) $encryptedWebhookSecret) === '') {
-            throw new InvalidArgumentException('Agrega un Webhook Secret antes de activar Mercado Pago.');
+    private static function insertCredential(
+        PDO $db,
+        string $environment,
+        string $publicKey,
+        string $accessToken,
+        string $webhookSecret,
+        string $accountId,
+        string $accountLabel,
+        string $actor
+    ): int {
+        if ($accessToken === '' || $webhookSecret === '') {
+            throw new InvalidArgumentException('Las versiones de Mercado Pago requieren Access Token y Webhook Secret.');
         }
 
         $stmt = $db->prepare(
-            'INSERT INTO pasarelas_pago_config
-             (proveedor, configurado, activo, ambiente, public_key, access_token_enc, webhook_secret_enc, updated_by)
-             VALUES (?, 1, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE
-               configurado = 1, activo = VALUES(activo), ambiente = VALUES(ambiente), public_key = VALUES(public_key),
-               access_token_enc = VALUES(access_token_enc), webhook_secret_enc = VALUES(webhook_secret_enc),
-               updated_by = VALUES(updated_by), updated_at = CURRENT_TIMESTAMP'
+            'INSERT INTO pasarelas_pago_credenciales
+             (proveedor, ambiente, public_key, access_token_enc, webhook_secret_enc,
+              cuenta_id, cuenta_label, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             self::PROVIDER_MERCADO_PAGO,
-            $active,
             $environment,
             $publicKey !== '' ? $publicKey : null,
-            $encryptedAccessToken,
-            $encryptedWebhookSecret,
-            mb_substr($actor, 0, 120, 'UTF-8'),
+            self::encrypt($accessToken),
+            self::encrypt($webhookSecret),
+            $accountId !== '' ? mb_substr($accountId, 0, 80, 'UTF-8') : null,
+            $accountLabel !== '' ? mb_substr($accountLabel, 0, 190, 'UTF-8') : null,
+            $actor !== '' ? mb_substr($actor, 0, 120, 'UTF-8') : null,
         ]);
-    }
-
-    public static function clearMercadoPagoSecret(PDO $db, string $secret): void
-    {
-        $column = match ($secret) {
-            'access_token' => 'access_token_enc',
-            'webhook_secret' => 'webhook_secret_enc',
-            default => throw new InvalidArgumentException('Secreto no válido.'),
-        };
-        $db->exec("UPDATE pasarelas_pago_config SET {$column} = NULL, updated_at = CURRENT_TIMESTAMP WHERE proveedor = 'MERCADO_PAGO'");
+        return (int) $db->lastInsertId();
     }
 
     private static function mercadoPagoFromEnvironment(): array
@@ -139,6 +324,7 @@ final class PaymentGatewayConfig
         $webhookSecret = trim((string) env('MERCADOPAGO_WEBHOOK_SECRET'));
         return [
             'provider' => self::PROVIDER_MERCADO_PAGO,
+            'credential_id' => null,
             'active' => $accessToken !== '',
             'environment' => 'PRODUCTION',
             'public_key' => trim((string) env('MERCADOPAGO_PUBLIC_KEY')),
@@ -148,26 +334,17 @@ final class PaymentGatewayConfig
             'configured_webhook_secret' => $webhookSecret !== '',
             'source' => 'environment',
             'updated_at' => null,
+            'account_id' => '',
+            'account_label' => '',
         ];
     }
 
-    private static function mercadoPagoRow(PDO $db): array
+    private static function sameSecret(string $left, string $right): bool
     {
-        $stmt = $db->prepare('SELECT access_token_enc, webhook_secret_enc FROM pasarelas_pago_config WHERE proveedor = ? LIMIT 1');
-        $stmt->execute([self::PROVIDER_MERCADO_PAGO]);
-        return $stmt->fetch() ?: [];
-    }
-
-    private static function hasPayablePreferences(PDO $db): bool
-    {
-        $stmt = $db->query(
-            "SELECT COUNT(*) FROM pedidos
-             WHERE estado = 'pending_payment'
-               AND mp_preference_id IS NOT NULL
-               AND mp_preference_id <> ''
-               AND (reserva_expira_en IS NULL OR reserva_expira_en >= NOW())"
-        );
-        return (int) $stmt->fetchColumn() > 0;
+        if ($left === '' || $right === '') {
+            return $left === $right;
+        }
+        return hash_equals($left, $right);
     }
 
     private static function encrypt(string $plainText): string
