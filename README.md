@@ -43,7 +43,7 @@ Durante la transición siguen siendo compatibles:
 - `MERCADOPAGO_PUBLIC_KEY`
 - `MERCADOPAGO_WEBHOOK_SECRET`
 
-Mientras Mercado Pago no se haya guardado desde `/admin/pasarelas.php`, checkout y webhook siguen leyendo esas variables antiguas. Después de guardar la configuración desde el panel, la base de datos pasa a ser la fuente principal; los secretos nunca se muestran de vuelta en el navegador.
+Mientras Mercado Pago no se haya guardado desde `/admin/pasarelas.php`, checkout y webhook siguen leyendo esas variables antiguas. Después del primer guardado, la base de datos pasa a ser la única fuente de las credenciales de Mercado Pago; ya no se mezclan secretos nuevos con valores antiguos del `.env`.
 
 `MERCADOPAGO_PUBLIC_KEY` queda disponible para futuras integraciones frontend, pero Checkout Pro por redirección no la necesita para crear preferencias desde el servidor.
 
@@ -52,8 +52,11 @@ Mientras Mercado Pago no se haya guardado desde `/admin/pasarelas.php`, checkout
 1. Aplica `database/005_payment_gateway_config.sql`.
 2. Define una sola vez `PAYMENT_GATEWAY_CONFIG_KEY` en el `.env` del servidor. No la cambies después de guardar credenciales o no podrán descifrarse.
 3. Entra a `/admin/pasarelas.php`.
-4. Pega el nuevo Access Token y Webhook Secret, define el ambiente y prueba la conexión.
-5. Guarda la configuración.
+4. Pega juntos el nuevo Access Token y el Webhook Secret de la misma integración. Si cambias el Access Token, el panel exige también el Webhook Secret para evitar mezclar cuentas.
+5. Marca si las credenciales son de pruebas o producción y prueba la conexión.
+6. Guarda la configuración.
+
+En Checkout Pro, Mercado Pago determina si una operación es de prueba o real mediante las credenciales utilizadas. La selección del panel es una etiqueta operativa y no cambia la URL de la API.
 
 La URL del webhook permanece en `/webhooks/mercadopago.php`; al cambiar de aplicación/cuenta, registra esa misma URL en Mercado Pago y copia el nuevo secreto al panel.
 
