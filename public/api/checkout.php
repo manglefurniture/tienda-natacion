@@ -34,11 +34,6 @@ if (!is_string($expectedToken) || $expectedToken === '' || !hash_equals($expecte
     checkout_json(419, ['message' => 'Tu sesión de compra expiró. Recarga la página.']);
 }
 
-$accessToken = trim((string) env('MERCADOPAGO_ACCESS_TOKEN'));
-if ($accessToken === '') {
-    checkout_json(503, ['message' => 'El pago en línea está en configuración. Inténtalo más tarde.']);
-}
-
 try {
     $payload = json_decode((string) file_get_contents('php://input'), true, 512, JSON_THROW_ON_ERROR);
 } catch (Throwable) {
@@ -67,7 +62,19 @@ if ($items === [] || count($items) > 20) {
     checkout_json(422, ['message' => 'Tu carrito está vacío o tiene demasiados artículos.']);
 }
 
-$db = Database::connection();
+try {
+    $db = Database::connection();
+    $gateway = PaymentGatewayConfig::mercadoPago($db);
+} catch (Throwable $e) {
+    error_log('[tienda-natacion][gateway-config] ' . $e->getMessage());
+    checkout_json(503, ['message' => 'El pago en línea está temporalmente no disponible.']);
+}
+
+$accessToken = trim((string) ($gateway['access_token'] ?? ''));
+if (empty($gateway['active']) || $accessToken === '') {
+    checkout_json(503, ['message' => 'El pago en línea está en configuración. Inténtalo más tarde.']);
+}
+
 $orderId = 0;
 $orderNumber = '';
 
