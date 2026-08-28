@@ -12,7 +12,7 @@ final class PaymentGatewayConfig
 
         try {
             $stmt = $db->prepare(
-                'SELECT proveedor, activo, ambiente, public_key, access_token_enc, webhook_secret_enc, updated_at
+                'SELECT proveedor, configurado, activo, ambiente, public_key, access_token_enc, webhook_secret_enc, updated_at
                  FROM pasarelas_pago_config WHERE proveedor = ? LIMIT 1'
             );
             $stmt->execute([self::PROVIDER_MERCADO_PAGO]);
@@ -26,9 +26,12 @@ final class PaymentGatewayConfig
             throw $e;
         }
 
-        if (!$row) {
+        if (!$row || (int) ($row['configurado'] ?? 0) !== 1) {
             return $fallback;
         }
+
+        $accessToken = self::decryptOptional((string) ($row['access_token_enc'] ?? ''));
+        $webhookSecret = self::decryptOptional((string) ($row['webhook_secret_enc'] ?? ''));
 
         return [
             'provider' => self::PROVIDER_MERCADO_PAGO,
@@ -37,12 +40,10 @@ final class PaymentGatewayConfig
                 ? (string) $row['ambiente']
                 : 'PRODUCTION',
             'public_key' => trim((string) ($row['public_key'] ?? '')),
-            'access_token' => self::decryptOptional((string) ($row['access_token_enc'] ?? ''))
-                ?: $fallback['access_token'],
-            'webhook_secret' => self::decryptOptional((string) ($row['webhook_secret_enc'] ?? ''))
-                ?: $fallback['webhook_secret'],
-            'configured_access_token' => trim((string) ($row['access_token_enc'] ?? '')) !== '' || $fallback['access_token'] !== '',
-            'configured_webhook_secret' => trim((string) ($row['webhook_secret_enc'] ?? '')) !== '' || $fallback['webhook_secret'] !== '',
+            'access_token' => $accessToken !== '' ? $accessToken : $fallback['access_token'],
+            'webhook_secret' => $webhookSecret !== '' ? $webhookSecret : $fallback['webhook_secret'],
+            'configured_access_token' => $accessToken !== '' || $fallback['access_token'] !== '',
+            'configured_webhook_secret' => $webhookSecret !== '' || $fallback['webhook_secret'] !== '',
             'source' => 'database',
             'updated_at' => $row['updated_at'] ?? null,
         ];
@@ -84,10 +85,10 @@ final class PaymentGatewayConfig
 
         $stmt = $db->prepare(
             'INSERT INTO pasarelas_pago_config
-             (proveedor, activo, ambiente, public_key, access_token_enc, webhook_secret_enc, updated_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+             (proveedor, configurado, activo, ambiente, public_key, access_token_enc, webhook_secret_enc, updated_by)
+             VALUES (?, 1, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
-               activo = VALUES(activo), ambiente = VALUES(ambiente), public_key = VALUES(public_key),
+               configurado = 1, activo = VALUES(activo), ambiente = VALUES(ambiente), public_key = VALUES(public_key),
                access_token_enc = VALUES(access_token_enc), webhook_secret_enc = VALUES(webhook_secret_enc),
                updated_by = VALUES(updated_by), updated_at = CURRENT_TIMESTAMP'
         );
