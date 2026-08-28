@@ -47,6 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 (new MercadoPago($newAccessToken))->getCurrentUser();
             }
 
+            OrderService::releaseExpiredReservations($db);
             PaymentGatewayConfig::saveMercadoPago(
                 $db,
                 [
@@ -154,7 +155,7 @@ $webhookUrl = $appUrl . '/webhooks/mercadopago.php';
           <option value="PRODUCTION" <?= ($config['environment'] ?? '') === 'PRODUCTION' ? 'selected' : '' ?>>Producción</option>
           <option value="TEST" <?= ($config['environment'] ?? '') === 'TEST' ? 'selected' : '' ?>>Pruebas</option>
         </select>
-        <p class="form-help">Es una etiqueta operativa. Mercado Pago determina si el pago es real o de prueba por las credenciales utilizadas, no por una URL distinta.</p>
+        <p class="form-help">En Producción el checkout usa <code>init_point</code>; en Pruebas usa <code>sandbox_init_point</code>. Usa siempre credenciales del mismo tipo.</p>
       </label>
 
       <label>
@@ -171,7 +172,7 @@ $webhookUrl = $appUrl . '/webhooks/mercadopago.php';
       <label class="field-wide">
         <span>Nuevo Webhook Secret</span>
         <input type="password" name="webhook_secret" maxlength="1000" value="" placeholder="Déjalo vacío para conservar el actual" autocomplete="new-password">
-        <p class="form-help">Se cifra antes de almacenarse y no se envía de vuelta al navegador.</p>
+        <p class="form-help">Se cifra antes de almacenarse y no se envía de vuelta al navegador. Si existe un pago todavía dentro de su ventana de 45 minutos, el panel bloqueará el cambio de credenciales hasta que se confirme o venza.</p>
       </label>
 
       <div class="field-wide" style="padding:14px;border:1px solid #dce5eb;border-radius:12px;background:#fbfdfe">
