@@ -66,12 +66,27 @@ final class PaymentGatewayConfig
             throw new InvalidArgumentException('Una credencial es demasiado larga.');
         }
 
+        $current = self::mercadoPago($db);
+        $currentAccessToken = trim((string) ($current['access_token'] ?? ''));
+        $currentWebhookSecret = trim((string) ($current['webhook_secret'] ?? ''));
+
         $existing = self::mercadoPagoRow($db);
         $encryptedAccessToken = $existing['access_token_enc'] ?? null;
         $encryptedWebhookSecret = $existing['webhook_secret_enc'] ?? null;
 
         if ($accessToken !== '' && $webhookSecret === '') {
             throw new InvalidArgumentException('Al cambiar el Access Token, ingresa también el Webhook Secret de esa integración.');
+        }
+
+        $accessTokenChanges = $accessToken !== ''
+            && ($currentAccessToken === '' || !hash_equals($currentAccessToken, $accessToken));
+        $webhookSecretChanges = $webhookSecret !== ''
+            && ($currentWebhookSecret === '' || !hash_equals($currentWebhookSecret, $webhookSecret));
+
+        if (($accessTokenChanges || $webhookSecretChanges) && self::hasPayablePreferences($db)) {
+            throw new RuntimeException(
+                'Hay pagos de Mercado Pago todavía en curso. Espera a que se confirmen o venza su preferencia antes de cambiar credenciales.'
+            );
         }
 
         if ($accessToken !== '') {
@@ -141,6 +156,18 @@ final class PaymentGatewayConfig
         $stmt = $db->prepare('SELECT access_token_enc, webhook_secret_enc FROM pasarelas_pago_config WHERE proveedor = ? LIMIT 1');
         $stmt->execute([self::PROVIDER_MERCADO_PAGO]);
         return $stmt->fetch() ?: [];
+    }
+
+    private static function hasPayablePreferences(PDO $db): bool
+    {
+        $stmt = $db->query(
+            "SELECT COUNT(*) FROM pedidos
+             WHERE estado = 'pending_payment'
+               AND mp_preference_id IS NOT NULL
+               AND mp_preference_id <> ''
+               AND (reserva_expira_en IS NULL OR reserva_expira_en >= NOW())"
+        );
+        return (int) $stmt->fetchColumn() > 0;
     }
 
     private static function encrypt(string $plainText): string
