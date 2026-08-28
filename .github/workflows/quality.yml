@@ -45,15 +45,15 @@ jobs:
         env:
           MYSQL_PWD: root
         run: |
+          mariadb -h 127.0.0.1 -uroot < database/001_initial_schema.sql
           for migration in \
-            database/001_initial_schema.sql \
             database/002_product_variants_and_aletas.sql \
             database/003_checkout_orders.sql \
             database/004_order_notifications.sql \
             database/005_payment_gateway_config.sql \
             database/006_payment_gateway_credentials_hardening.sql
           do
-            mariadb -h 127.0.0.1 -uroot < "$migration"
+            mariadb -h 127.0.0.1 -uroot hache_tienda < "$migration"
           done
 
       - name: Payment credential MariaDB regressions
