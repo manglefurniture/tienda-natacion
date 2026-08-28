@@ -51,9 +51,9 @@ test_ok(str_contains($configSource, 'FOR UPDATE'), 'El cambio de configuración 
 test_ok(str_contains($configSource, 'LOCK IN SHARE MODE'), 'Checkout debe serializar la lectura inicial contra cambios concurrentes.');
 test_ok(!str_contains($configSource, 'hasPayablePreferences'), 'El diseño no debe depender de bloquear cambios por estado temporal del pedido.');
 test_ok(str_contains($configSource, 'UPDATE pedidos SET mp_credencial_id = ? WHERE mp_credencial_id IS NULL'), 'La primera transición debe vincular pedidos legacy a su versión histórica.');
-test_ok(str_contains($configSource, "&& $fallback['access_token'] !== '')"), 'La preservación legacy debe depender del Access Token aunque falte Webhook Secret.');
-test_ok(str_contains($configSource, "$webhookSecret !== '' ? self::encrypt($webhookSecret) : null"), 'Una versión legacy debe permitir Webhook Secret ausente.');
-test_ok(str_contains($configSource, "credential['webhook_secret'] ?? ''"), 'Las versiones sin Webhook Secret deben poder excluirse de candidatos de webhook.');
+test_ok(str_contains($configSource, '$fallback[\'access_token\'] !== \'\''), 'La preservación legacy debe depender del Access Token aunque falte Webhook Secret.');
+test_ok(str_contains($configSource, '$webhookSecret !== \'\' ? self::encrypt($webhookSecret) : null'), 'Una versión legacy debe permitir Webhook Secret ausente.');
+test_ok(str_contains($configSource, '$credential[\'webhook_secret\'] ?? \'\''), 'Las versiones sin Webhook Secret deben excluirse de candidatos de webhook.');
 
 test_ok(str_contains($migrationSource, 'CREATE TABLE IF NOT EXISTS pasarelas_pago_credenciales'), 'La migración debe conservar historial de credenciales.');
 test_ok(str_contains($migrationSource, 'credencial_actual_id'), 'La configuración debe apuntar a una versión actual.');
