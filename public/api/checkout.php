@@ -64,25 +64,33 @@ if ($items === [] || count($items) > 20) {
 
 try {
     $db = Database::connection();
-    $gateway = PaymentGatewayConfig::mercadoPago($db);
 } catch (Throwable $e) {
-    error_log('[tienda-natacion][gateway-config] ' . $e->getMessage());
+    error_log('[tienda-natacion][database] ' . $e->getMessage());
     checkout_json(503, ['message' => 'El pago en línea está temporalmente no disponible.']);
-}
-
-$accessToken = trim((string) ($gateway['access_token'] ?? ''));
-if (empty($gateway['active']) || $accessToken === '') {
-    checkout_json(503, ['message' => 'El pago en línea está en configuración. Inténtalo más tarde.']);
 }
 
 $orderId = 0;
 $orderNumber = '';
 $preferenceStartsAt = 0;
 $preferenceExpiresAt = 0;
+$gateway = [];
+$accessToken = '';
+$credentialId = 0;
 
 try {
     OrderService::releaseExpiredReservations($db);
     $db->beginTransaction();
+
+    // Mantiene un lock compartido sobre la configuración hasta que el pedido quede
+    // ligado a una versión concreta. Un cambio de credenciales toma FOR UPDATE,
+    // por lo que el primer paso desde .env también queda serializado.
+    $gateway = PaymentGatewayConfig::mercadoPagoForCheckout($db);
+    $accessToken = trim((string) ($gateway['access_token'] ?? ''));
+    $credentialId = (int) ($gateway['credential_id'] ?? 0);
+    if (empty($gateway['active']) || $accessToken === '') {
+        $db->rollBack();
+        checkout_json(503, ['message' => 'El pago en línea está en configuración. Inténtalo más tarde.']);
+    }
 
     $normalized = [];
     foreach ($items as $item) {
@@ -185,10 +193,18 @@ try {
     $orderStmt = $db->prepare(
         "INSERT INTO pedidos
          (numero_pedido, cliente_nombre, cliente_telefono, cliente_email, subtotal, total, moneda,
-          estado, stock_reservado, reserva_expira_en)
-         VALUES (?, ?, ?, ?, ?, ?, 'MXN', 'pending_payment', 1, DATE_ADD(NOW(), INTERVAL 45 MINUTE))"
+          mp_credencial_id, estado, stock_reservado, reserva_expira_en)
+         VALUES (?, ?, ?, ?, ?, ?, 'MXN', ?, 'pending_payment', 1, DATE_ADD(NOW(), INTERVAL 45 MINUTE))"
     );
-    $orderStmt->execute([$orderNumber, $name, $phone, $email !== '' ? $email : null, $subtotal, $subtotal]);
+    $orderStmt->execute([
+        $orderNumber,
+        $name,
+        $phone,
+        $email !== '' ? $email : null,
+        $subtotal,
+        $subtotal,
+        $credentialId > 0 ? $credentialId : null,
+    ]);
     $orderId = (int) $db->lastInsertId();
 
     $clockStmt = $db->prepare(
