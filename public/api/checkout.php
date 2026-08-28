@@ -77,6 +77,8 @@ if (empty($gateway['active']) || $accessToken === '') {
 
 $orderId = 0;
 $orderNumber = '';
+$preferenceStartsAt = 0;
+$preferenceExpiresAt = 0;
 
 try {
     OrderService::releaseExpiredReservations($db);
@@ -189,6 +191,18 @@ try {
     $orderStmt->execute([$orderNumber, $name, $phone, $email !== '' ? $email : null, $subtotal, $subtotal]);
     $orderId = (int) $db->lastInsertId();
 
+    $clockStmt = $db->prepare(
+        'SELECT UNIX_TIMESTAMP(creado_en) AS starts_at, UNIX_TIMESTAMP(reserva_expira_en) AS expires_at
+         FROM pedidos WHERE id = ? LIMIT 1'
+    );
+    $clockStmt->execute([$orderId]);
+    $clock = $clockStmt->fetch();
+    $preferenceStartsAt = (int) ($clock['starts_at'] ?? 0);
+    $preferenceExpiresAt = (int) ($clock['expires_at'] ?? 0);
+    if ($preferenceStartsAt <= 0 || $preferenceExpiresAt <= $preferenceStartsAt) {
+        throw new RuntimeException('No se pudo establecer la vigencia segura del pago.');
+    }
+
     $itemStmt = $db->prepare(
         'INSERT INTO pedido_items
          (pedido_id, producto_id, producto_variante_id, producto_nombre, variante_nombre,
@@ -222,6 +236,9 @@ try {
         ];
     }, $validatedItems);
 
+    $formatMpDate = static fn(int $timestamp): string => (new DateTimeImmutable('@' . $timestamp))
+        ->format('Y-m-d\TH:i:s.000\Z');
+
     $preferencePayload = [
         'items' => $preferenceItems,
         'external_reference' => $orderNumber,
@@ -238,14 +255,19 @@ try {
         'binary_mode' => true,
         'statement_descriptor' => 'HACHE NATACION',
         'metadata' => ['pedido' => $orderNumber],
+        'expires' => true,
+        'expiration_date_from' => $formatMpDate($preferenceStartsAt),
+        'expiration_date_to' => $formatMpDate($preferenceExpiresAt),
     ];
 
     $mercadoPago = new MercadoPago($accessToken);
     $preference = $mercadoPago->createPreference($preferencePayload);
     $preferenceId = trim((string) ($preference['id'] ?? ''));
-    $initPoint = trim((string) ($preference['init_point'] ?? ''));
+    $environment = strtoupper(trim((string) ($gateway['environment'] ?? 'PRODUCTION')));
+    $redirectField = $environment === 'TEST' ? 'sandbox_init_point' : 'init_point';
+    $initPoint = trim((string) ($preference[$redirectField] ?? ''));
     if ($preferenceId === '' || $initPoint === '') {
-        throw new RuntimeException('Mercado Pago no devolvió un enlace de pago.');
+        throw new RuntimeException('Mercado Pago no devolvió un enlace de pago válido para el modo configurado.');
     }
 
     $updatePreference = $db->prepare('UPDATE pedidos SET mp_preference_id = ? WHERE id = ?');
