@@ -28,8 +28,12 @@ Aplicar en orden:
 3. `database/003_checkout_orders.sql`
 4. `database/004_order_notifications.sql`
 5. `database/005_payment_gateway_config.sql`
+6. `database/006_payment_gateway_credentials_hardening.sql`
+7. `php bin/migrate-payment-credentials-v2.php`
 
-La migración `005` crea un historial inmutable de credenciales y agrega `mp_credencial_id` a cada pedido. Una versión histórica no se borra mientras un pedido la referencie.
+La migración `005` introduce el historial de credenciales y `mp_credencial_id`. La `006` prepara `credential_ref`; el comando PHP convierte de forma idempotente cualquier sobre AES-GCM v1 existente a v2 con AAD contextual y después finaliza las restricciones de MariaDB.
+
+**Orden de despliegue para una instalación que ya usa la tienda:** conservar sin cambios `PAYMENT_GATEWAY_CONFIG_KEY`, aplicar primero `006`, ejecutar inmediatamente `php bin/migrate-payment-credentials-v2.php` y verificar que termine sin errores. El lector mantiene compatibilidad transitoria con filas v1 sin `credential_ref`, pero toda credencial nueva se escribe en v2. Una vez finalizado el comando, MariaDB impide modificar versiones históricas.
 
 ## Variables de producción
 
@@ -51,13 +55,17 @@ Mientras Mercado Pago no se haya guardado desde `/admin/pasarelas.php`, checkout
 
 Cada cambio efectivo de Access Token, Webhook Secret, Public Key o tipo de credenciales crea una versión nueva. La configuración solo apunta a cuál es la versión actual; las anteriores permanecen cifradas para poder procesar correctamente eventos posteriores de pedidos antiguos.
 
+Cada versión posee un `credential_ref` opaco e inmutable. Access Token y Webhook Secret se cifran con AES-256-GCM usando un tag completo de 16 bytes y AAD compuesto por `proveedor + credential_ref + propósito del campo`. Por ello, un ciphertext no puede moverse a otra versión, otro proveedor o de `access_token` a `webhook_secret` y seguir autenticando.
+
 Cada pedido guarda la versión con la que se creó. El retorno del checkout usa esa versión específica. El webhook evalúa las versiones históricas hasta encontrar la firma correcta y usa el Access Token de esa misma versión para consultar el pago. Así, reembolsos y contracargos siguen funcionando aunque la cuenta activa haya cambiado después.
 
 El checkout toma un lock compartido sobre la configuración mientras crea el pedido y el cambio de configuración usa un lock exclusivo. Esto serializa la transición inicial desde `.env` y evita que un pedido quede entre dos versiones.
 
+MariaDB refuerza además la invariancia: la configuración apunta a `(proveedor, credencial_actual_id)` mediante FK compuesta y un trigger bloquea cualquier `UPDATE` de una fila histórica de credenciales. Las versiones se rotan insertando una fila nueva; no se renombran ni se sobreescriben.
+
 ## Cambio de cuenta de Mercado Pago
 
-1. Aplica `database/005_payment_gateway_config.sql`.
+1. Verifica que `database/006_payment_gateway_credentials_hardening.sql` y `php bin/migrate-payment-credentials-v2.php` ya fueron ejecutados si la instalación proviene de la versión anterior.
 2. Define una sola vez `PAYMENT_GATEWAY_CONFIG_KEY` en el `.env` del servidor. No la cambies después de guardar credenciales o no podrán descifrarse.
 3. Entra a `/admin/pasarelas.php`.
 4. Pega juntos el nuevo Access Token y el Webhook Secret de la misma integración. Si cambias el Access Token, el panel exige también el Webhook Secret.
