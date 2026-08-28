@@ -6,15 +6,62 @@ on:
     branches: [main]
 
 jobs:
-  php-syntax:
+  php-quality:
     runs-on: ubuntu-latest
+
+    services:
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mariadb-admin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
           extensions: mbstring, openssl, pdo_mysql
+
+      - name: Install MariaDB client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mariadb-client
+
       - name: PHP syntax
         run: find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
+
       - name: Payment gateway safety regressions
         run: php tests/payment-gateway-regression.php
+
+      - name: Build MariaDB schema
+        env:
+          MYSQL_PWD: root
+        run: |
+          mariadb -h 127.0.0.1 -uroot < database/001_initial_schema.sql
+          for migration in \
+            database/002_product_variants_and_aletas.sql \
+            database/003_checkout_orders.sql \
+            database/004_order_notifications.sql \
+            database/005_payment_gateway_config.sql \
+            database/006_payment_gateway_credentials_hardening.sql
+          do
+            mariadb -h 127.0.0.1 -uroot hache_tienda < "$migration"
+          done
+
+      - name: Payment credential MariaDB regressions
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: hache_tienda
+          DB_USERNAME: root
+          DB_PASSWORD: root
+          PAYMENT_GATEWAY_CONFIG_KEY: ci-payment-key-2026-long-and-stable
+        run: php tests/payment-gateway-mariadb.php

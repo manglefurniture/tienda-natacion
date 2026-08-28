@@ -4,7 +4,7 @@ declare(strict_types=1);
 final class PaymentGatewayConfig
 {
     private const PROVIDER_MERCADO_PAGO = 'MERCADO_PAGO';
-    private const CIPHER = 'aes-256-gcm';
+    private static array $credentialRefSupport = [];
 
     public static function mercadoPago(PDO $db): array
     {
@@ -22,9 +22,10 @@ final class PaymentGatewayConfig
             throw new InvalidArgumentException('La versión de credenciales no es válida.');
         }
 
+        $credentialRef = self::credentialRefProjection($db);
         $stmt = $db->prepare(
-            'SELECT id, proveedor, ambiente, public_key, access_token_enc, webhook_secret_enc,
-                    cuenta_id, cuenta_label, created_at
+            'SELECT id, proveedor, ' . $credentialRef . ', ambiente, public_key,
+                    access_token_enc, webhook_secret_enc, cuenta_id, cuenta_label, created_at
              FROM pasarelas_pago_credenciales
              WHERE id = ? AND proveedor = ? LIMIT 1'
         );
@@ -60,9 +61,10 @@ final class PaymentGatewayConfig
         }
 
         $currentId = (int) ($config['credencial_actual_id'] ?? 0);
+        $credentialRef = self::credentialRefProjection($db);
         $stmt = $db->prepare(
-            'SELECT id, proveedor, ambiente, public_key, access_token_enc, webhook_secret_enc,
-                    cuenta_id, cuenta_label, created_at
+            'SELECT id, proveedor, ' . $credentialRef . ', ambiente, public_key,
+                    access_token_enc, webhook_secret_enc, cuenta_id, cuenta_label, created_at
              FROM pasarelas_pago_credenciales
              WHERE proveedor = ?
              ORDER BY (id = ?) DESC, id DESC'
@@ -77,10 +79,6 @@ final class PaymentGatewayConfig
                 'database-history'
             );
 
-            // Una versión histórica puede conservar solo el Access Token del
-            // despliegue legacy. Sirve para reconciliar retornos por pedido,
-            // pero sin Webhook Secret nunca debe participar en la validación
-            // de firmas entrantes.
             if (trim((string) ($credential['access_token'] ?? '')) === ''
                 || trim((string) ($credential['webhook_secret'] ?? '')) === '') {
                 continue;
@@ -143,9 +141,6 @@ final class PaymentGatewayConfig
             if ((int) ($config['configurado'] ?? 0) !== 1
                 && $currentCredentialId <= 0
                 && $fallback['access_token'] !== '') {
-                // Conserva el token legacy incluso si ese despliegue nunca tuvo
-                // Webhook Secret. Los retornos de preferencias ya creadas aún
-                // necesitan ese token para consultar Mercado Pago después del cutover.
                 $currentCredentialId = self::insertLegacyCredential(
                     $db,
                     $fallback['environment'],
@@ -155,8 +150,6 @@ final class PaymentGatewayConfig
                     $actor !== '' ? $actor : 'legacy-env'
                 );
 
-                // Todo pedido previo o checkout que ya alcanzó a crearse con el .env
-                // queda ligado a la versión legacy antes de activar una versión nueva.
                 $assignLegacy = $db->prepare(
                     'UPDATE pedidos SET mp_credencial_id = ? WHERE mp_credencial_id IS NULL'
                 );
@@ -234,11 +227,15 @@ final class PaymentGatewayConfig
     {
         $fallback = self::mercadoPagoFromEnvironment();
         $lockClause = $lockForCheckout && $db->inTransaction() ? ' LOCK IN SHARE MODE' : '';
+        $credentialRef = self::hasCredentialRefColumn($db)
+            ? 'v.credential_ref AS credential_ref'
+            : 'NULL AS credential_ref';
 
         try {
             $stmt = $db->prepare(
                 'SELECT c.proveedor, c.configurado, c.activo, c.credencial_actual_id, c.updated_at,
-                        v.id, v.ambiente, v.public_key, v.access_token_enc, v.webhook_secret_enc,
+                        v.id, ' . $credentialRef . ', v.ambiente, v.public_key,
+                        v.access_token_enc, v.webhook_secret_enc,
                         v.cuenta_id, v.cuenta_label, v.created_at
                  FROM pasarelas_pago_config c
                  LEFT JOIN pasarelas_pago_credenciales v ON v.id = c.credencial_actual_id
@@ -261,6 +258,7 @@ final class PaymentGatewayConfig
             return [
                 'provider' => self::PROVIDER_MERCADO_PAGO,
                 'credential_id' => null,
+                'credential_ref' => null,
                 'active' => false,
                 'environment' => 'PRODUCTION',
                 'public_key' => '',
@@ -283,12 +281,28 @@ final class PaymentGatewayConfig
 
     private static function hydrateCredential(array $row, bool $active, string $source): array
     {
-        $accessToken = self::decryptOptional((string) ($row['access_token_enc'] ?? ''));
-        $webhookSecret = self::decryptOptional((string) ($row['webhook_secret_enc'] ?? ''));
+        $provider = trim((string) ($row['proveedor'] ?? self::PROVIDER_MERCADO_PAGO));
+        $credentialRef = trim((string) ($row['credential_ref'] ?? ''));
+
+        $accessToken = self::decryptStored(
+            (string) ($row['access_token_enc'] ?? ''),
+            $provider,
+            $credentialRef,
+            'access_token',
+            false
+        );
+        $webhookSecret = self::decryptStored(
+            (string) ($row['webhook_secret_enc'] ?? ''),
+            $provider,
+            $credentialRef,
+            'webhook_secret',
+            true
+        );
 
         return [
-            'provider' => self::PROVIDER_MERCADO_PAGO,
+            'provider' => $provider,
             'credential_id' => (int) ($row['id'] ?? 0) ?: null,
+            'credential_ref' => $credentialRef !== '' ? $credentialRef : null,
             'active' => $active,
             'environment' => in_array((string) ($row['ambiente'] ?? ''), ['TEST', 'PRODUCTION'], true)
                 ? (string) $row['ambiente']
@@ -317,18 +331,25 @@ final class PaymentGatewayConfig
             throw new InvalidArgumentException('La versión legacy requiere un Access Token.');
         }
 
+        self::requireCredentialRefColumn($db);
+        $credentialRef = self::newCredentialRef();
+        $cipher = self::cipher();
+
         $stmt = $db->prepare(
             'INSERT INTO pasarelas_pago_credenciales
-             (proveedor, ambiente, public_key, access_token_enc, webhook_secret_enc,
+             (proveedor, credential_ref, ambiente, public_key, access_token_enc, webhook_secret_enc,
               cuenta_id, cuenta_label, created_by)
-             VALUES (?, ?, ?, ?, ?, NULL, ?, ?)'
+             VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)'
         );
         $stmt->execute([
             self::PROVIDER_MERCADO_PAGO,
+            $credentialRef,
             $environment,
             $publicKey !== '' ? $publicKey : null,
-            self::encrypt($accessToken),
-            $webhookSecret !== '' ? self::encrypt($webhookSecret) : null,
+            $cipher->encrypt($accessToken, self::PROVIDER_MERCADO_PAGO, $credentialRef, 'access_token'),
+            $webhookSecret !== ''
+                ? $cipher->encrypt($webhookSecret, self::PROVIDER_MERCADO_PAGO, $credentialRef, 'webhook_secret')
+                : null,
             'Credenciales legacy (.env)',
             $actor !== '' ? mb_substr($actor, 0, 120, 'UTF-8') : null,
         ]);
@@ -350,18 +371,23 @@ final class PaymentGatewayConfig
             throw new InvalidArgumentException('Las versiones activas de Mercado Pago requieren Access Token y Webhook Secret.');
         }
 
+        self::requireCredentialRefColumn($db);
+        $credentialRef = self::newCredentialRef();
+        $cipher = self::cipher();
+
         $stmt = $db->prepare(
             'INSERT INTO pasarelas_pago_credenciales
-             (proveedor, ambiente, public_key, access_token_enc, webhook_secret_enc,
+             (proveedor, credential_ref, ambiente, public_key, access_token_enc, webhook_secret_enc,
               cuenta_id, cuenta_label, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             self::PROVIDER_MERCADO_PAGO,
+            $credentialRef,
             $environment,
             $publicKey !== '' ? $publicKey : null,
-            self::encrypt($accessToken),
-            self::encrypt($webhookSecret),
+            $cipher->encrypt($accessToken, self::PROVIDER_MERCADO_PAGO, $credentialRef, 'access_token'),
+            $cipher->encrypt($webhookSecret, self::PROVIDER_MERCADO_PAGO, $credentialRef, 'webhook_secret'),
             $accountId !== '' ? mb_substr($accountId, 0, 80, 'UTF-8') : null,
             $accountLabel !== '' ? mb_substr($accountLabel, 0, 190, 'UTF-8') : null,
             $actor !== '' ? mb_substr($actor, 0, 120, 'UTF-8') : null,
@@ -378,6 +404,7 @@ final class PaymentGatewayConfig
         return [
             'provider' => self::PROVIDER_MERCADO_PAGO,
             'credential_id' => null,
+            'credential_ref' => null,
             'active' => $accessToken !== '',
             'environment' => 'PRODUCTION',
             'public_key' => trim((string) env('MERCADOPAGO_PUBLIC_KEY')),
@@ -392,6 +419,43 @@ final class PaymentGatewayConfig
         ];
     }
 
+    private static function decryptStored(
+        string $payload,
+        string $provider,
+        string $credentialRef,
+        string $purpose,
+        bool $optional
+    ): string {
+        if (trim($payload) === '') {
+            if ($optional) {
+                return '';
+            }
+            throw new RuntimeException('La credencial cifrada obligatoria está vacía.');
+        }
+
+        $cipher = self::cipher();
+        if ($credentialRef === '') {
+            return $cipher->decryptLegacyV1($payload);
+        }
+
+        return $cipher->decrypt($payload, $provider, $credentialRef, $purpose);
+    }
+
+    private static function cipher(): PaymentCredentialCipher
+    {
+        return new PaymentCredentialCipher(self::encryptionSecret());
+    }
+
+    private static function encryptionSecret(): string
+    {
+        $secret = trim((string) env('PAYMENT_GATEWAY_CONFIG_KEY'));
+        if ($secret === '') {
+            throw new RuntimeException('PAYMENT_GATEWAY_CONFIG_KEY no está configurada en el servidor.');
+        }
+
+        return $secret;
+    }
+
     private static function sameSecret(string $left, string $right): bool
     {
         if ($left === '' || $right === '') {
@@ -401,81 +465,49 @@ final class PaymentGatewayConfig
         return hash_equals($left, $right);
     }
 
-    private static function encrypt(string $plainText): string
+    private static function hasCredentialRefColumn(PDO $db): bool
     {
-        if (!function_exists('openssl_encrypt')) {
-            throw new RuntimeException('OpenSSL es obligatorio para guardar credenciales de pago.');
-        }
-
-        $key = self::encryptionKey();
-        $ivLength = openssl_cipher_iv_length(self::CIPHER);
-        if (!is_int($ivLength) || $ivLength <= 0) {
-            throw new RuntimeException('No se pudo inicializar el cifrado de credenciales.');
-        }
-
-        $iv = random_bytes($ivLength);
-        $tag = '';
-        $cipherText = openssl_encrypt($plainText, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv, $tag);
-        if ($cipherText === false) {
-            throw new RuntimeException('No se pudo cifrar la credencial.');
-        }
-
-        return base64_encode(json_encode([
-            'v' => 1,
-            'iv' => base64_encode($iv),
-            'tag' => base64_encode($tag),
-            'data' => base64_encode($cipherText),
-        ], JSON_THROW_ON_ERROR));
-    }
-
-    private static function decryptOptional(string $payload): string
-    {
-        if (trim($payload) === '') {
-            return '';
-        }
-        if (!function_exists('openssl_decrypt')) {
-            throw new RuntimeException('OpenSSL es obligatorio para leer credenciales de pago.');
+        $key = spl_object_id($db);
+        if (array_key_exists($key, self::$credentialRefSupport)) {
+            return self::$credentialRefSupport[$key];
         }
 
         try {
-            $decoded = json_decode(base64_decode($payload, true) ?: '', true, 512, JSON_THROW_ON_ERROR);
-            if (!is_array($decoded) || (int) ($decoded['v'] ?? 0) !== 1) {
-                throw new RuntimeException('Formato de credencial cifrada no válido.');
-            }
-
-            $iv = base64_decode((string) ($decoded['iv'] ?? ''), true);
-            $tag = base64_decode((string) ($decoded['tag'] ?? ''), true);
-            $data = base64_decode((string) ($decoded['data'] ?? ''), true);
-            if ($iv === false || $tag === false || $data === false) {
-                throw new RuntimeException('Credencial cifrada dañada.');
-            }
-
-            $plainText = openssl_decrypt(
-                $data,
-                self::CIPHER,
-                self::encryptionKey(),
-                OPENSSL_RAW_DATA,
-                $iv,
-                $tag
+            $stmt = $db->prepare(
+                "SELECT COUNT(*)
+                 FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME = 'pasarelas_pago_credenciales'
+                   AND COLUMN_NAME = 'credential_ref'"
             );
-            if ($plainText === false) {
-                throw new RuntimeException('No se pudo descifrar la credencial.');
-            }
+            $stmt->execute();
+            self::$credentialRefSupport[$key] = (int) $stmt->fetchColumn() > 0;
+        } catch (Throwable) {
+            self::$credentialRefSupport[$key] = false;
+        }
 
-            return $plainText;
-        } catch (Throwable $e) {
-            throw new RuntimeException('No se pudo leer la credencial cifrada.', 0, $e);
+        return self::$credentialRefSupport[$key];
+    }
+
+    private static function credentialRefProjection(PDO $db): string
+    {
+        return self::hasCredentialRefColumn($db)
+            ? 'credential_ref'
+            : 'NULL AS credential_ref';
+    }
+
+    private static function requireCredentialRefColumn(PDO $db): void
+    {
+        if (!self::hasCredentialRefColumn($db)) {
+            throw new RuntimeException(
+                'Falta la migración 006 de credenciales de pago. Aplícala antes de guardar una versión nueva.'
+            );
         }
     }
 
-    private static function encryptionKey(): string
+    private static function newCredentialRef(): string
     {
-        $secret = trim((string) env('PAYMENT_GATEWAY_CONFIG_KEY'));
-        if ($secret === '') {
-            throw new RuntimeException('PAYMENT_GATEWAY_CONFIG_KEY no está configurada en el servidor.');
-        }
-
-        return hash('sha256', $secret, true);
+        return 'cred_' . bin2hex(random_bytes(16));
     }
 
     private static function isMissingTableError(PDOException $e): bool
