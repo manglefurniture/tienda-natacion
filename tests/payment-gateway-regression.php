@@ -46,14 +46,19 @@ test_ok(str_contains($configSource, 'PAYMENT_GATEWAY_CONFIG_KEY'), 'La clave mae
 test_ok(str_contains($configSource, 'mercadoPagoCredentialCandidates'), 'Webhook debe poder resolver versiones históricas.');
 test_ok(str_contains($configSource, 'credentialById'), 'Debe poder recuperarse una versión concreta por pedido.');
 test_ok(str_contains($configSource, 'insertCredential'), 'Los cambios deben crear versiones inmutables de credenciales.');
+test_ok(str_contains($configSource, 'insertLegacyCredential'), 'La transición debe preservar una versión legacy independiente.');
 test_ok(str_contains($configSource, 'FOR UPDATE'), 'El cambio de configuración debe bloquear la fila actual durante la transición.');
 test_ok(str_contains($configSource, 'LOCK IN SHARE MODE'), 'Checkout debe serializar la lectura inicial contra cambios concurrentes.');
 test_ok(!str_contains($configSource, 'hasPayablePreferences'), 'El diseño no debe depender de bloquear cambios por estado temporal del pedido.');
 test_ok(str_contains($configSource, 'UPDATE pedidos SET mp_credencial_id = ? WHERE mp_credencial_id IS NULL'), 'La primera transición debe vincular pedidos legacy a su versión histórica.');
+test_ok(str_contains($configSource, "&& $fallback['access_token'] !== '')"), 'La preservación legacy debe depender del Access Token aunque falte Webhook Secret.');
+test_ok(str_contains($configSource, "$webhookSecret !== '' ? self::encrypt($webhookSecret) : null"), 'Una versión legacy debe permitir Webhook Secret ausente.');
+test_ok(str_contains($configSource, "credential['webhook_secret'] ?? ''"), 'Las versiones sin Webhook Secret deben poder excluirse de candidatos de webhook.');
 
 test_ok(str_contains($migrationSource, 'CREATE TABLE IF NOT EXISTS pasarelas_pago_credenciales'), 'La migración debe conservar historial de credenciales.');
 test_ok(str_contains($migrationSource, 'credencial_actual_id'), 'La configuración debe apuntar a una versión actual.');
 test_ok(str_contains($migrationSource, 'mp_credencial_id'), 'Cada pedido debe guardar la versión usada.');
+test_ok(str_contains($migrationSource, 'webhook_secret_enc TEXT NULL'), 'El historial legacy debe admitir token sin Webhook Secret.');
 test_ok(str_contains($migrationSource, 'ON UPDATE CASCADE ON DELETE RESTRICT'), 'Las credenciales históricas no deben poder borrarse si están referenciadas.');
 
 test_ok(str_contains($panelSource, '(new MercadoPago($newAccessToken))->getCurrentUser()'), 'Un Access Token nuevo debe validarse con Mercado Pago antes de guardarse.');
@@ -69,7 +74,7 @@ test_ok(!str_contains($checkoutSource, "env('MERCADOPAGO_ACCESS_TOKEN')"), 'Chec
 test_ok(str_contains($returnSource, 'PaymentGatewayConfig::credentialById($db, $credentialId)'), 'El retorno debe usar la versión ligada al pedido.');
 test_ok(!str_contains($returnSource, "env('MERCADOPAGO_ACCESS_TOKEN')"), 'El retorno no debe depender del Access Token legacy.');
 
-test_ok(str_contains($webhookSource, 'PaymentGatewayConfig::mercadoPagoCredentialCandidates($db)'), 'Webhook debe evaluar versiones históricas.');
+test_ok(str_contains($webhookSource, 'PaymentGatewayConfig::mercadoPagoCredentialCandidates($db)'), 'Webhook debe evaluar versiones históricas completas.');
 test_ok(str_contains($webhookSource, 'foreach ($credentials as $credential)'), 'Webhook debe probar cada versión hasta encontrar firma y token válidos.');
 test_ok(str_contains($webhookSource, 'hash_equals($expected, $v1)'), 'Webhook debe validar la firma antes de consultar el pago.');
 test_ok(!str_contains($webhookSource, 'PaymentGatewayConfig::mercadoPago($db)'), 'Webhook no debe limitarse a la credencial activa.');
