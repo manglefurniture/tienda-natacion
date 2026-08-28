@@ -42,6 +42,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $label = $nickname !== '' ? $nickname : ($accountId !== '' ? 'ID ' . $accountId : 'cuenta Mercado Pago');
             $success = 'Conexión correcta con ' . $label . '.';
         } else {
+            $newAccessToken = trim((string) ($_POST['access_token'] ?? ''));
+            if ($newAccessToken !== '') {
+                (new MercadoPago($newAccessToken))->getCurrentUser();
+            }
+
             PaymentGatewayConfig::saveMercadoPago(
                 $db,
                 [
@@ -160,7 +165,7 @@ $webhookUrl = $appUrl . '/webhooks/mercadopago.php';
       <label class="field-wide">
         <span>Nuevo Access Token</span>
         <input type="password" name="access_token" maxlength="1000" value="" placeholder="Déjalo vacío para conservar el actual" autocomplete="new-password">
-        <p class="form-help">Por seguridad el token guardado nunca se vuelve a mostrar. Si cambias este token, debes introducir también el Webhook Secret de la misma integración.</p>
+        <p class="form-help">Por seguridad el token guardado nunca se vuelve a mostrar. Si cambias este token, debes introducir también el Webhook Secret de la misma integración. Antes de guardar, el servidor validará automáticamente el token con Mercado Pago.</p>
       </label>
 
       <label class="field-wide">
