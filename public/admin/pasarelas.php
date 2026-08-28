@@ -21,6 +21,9 @@ try {
         'updated_at' => null,
         'access_token' => '',
         'webhook_secret' => '',
+        'credential_id' => null,
+        'account_id' => '',
+        'account_label' => '',
     ];
     $error = $e->getMessage();
 }
@@ -43,11 +46,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $success = 'Conexión correcta con ' . $label . '.';
         } else {
             $newAccessToken = trim((string) ($_POST['access_token'] ?? ''));
+            $accountId = '';
+            $accountLabel = '';
             if ($newAccessToken !== '') {
-                (new MercadoPago($newAccessToken))->getCurrentUser();
+                $account = (new MercadoPago($newAccessToken))->getCurrentUser();
+                $accountId = trim((string) ($account['id'] ?? ''));
+                $nickname = trim((string) ($account['nickname'] ?? ''));
+                $accountLabel = $nickname !== '' ? $nickname : ($accountId !== '' ? 'ID ' . $accountId : '');
             }
 
-            OrderService::releaseExpiredReservations($db);
             PaymentGatewayConfig::saveMercadoPago(
                 $db,
                 [
@@ -56,10 +63,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'public_key' => $_POST['public_key'] ?? '',
                     'access_token' => $_POST['access_token'] ?? '',
                     'webhook_secret' => $_POST['webhook_secret'] ?? '',
+                    'account_id' => $accountId,
+                    'account_label' => $accountLabel,
                 ],
                 (string) ($_SESSION['admin_username'] ?? 'admin')
             );
-            admin_flash('success', 'Configuración de Mercado Pago guardada.');
+            admin_flash('success', 'Configuración de Mercado Pago guardada como una versión segura.');
             admin_redirect('/admin/pasarelas.php');
         }
     } catch (Throwable $e) {
@@ -82,6 +91,8 @@ $keyConfigured = trim((string) env('PAYMENT_GATEWAY_CONFIG_KEY')) !== '';
 $sourceLabel = ($config['source'] ?? '') === 'database' ? 'Panel / base de datos' : 'Variables del servidor (.env)';
 $appUrl = rtrim((string) env('APP_URL', 'https://tienda.hnatacion.com'), '/');
 $webhookUrl = $appUrl . '/webhooks/mercadopago.php';
+$credentialId = (int) ($config['credential_id'] ?? 0);
+$accountLabel = trim((string) ($config['account_label'] ?? ''));
 ?>
 <!doctype html>
 <html lang="es">
@@ -115,7 +126,7 @@ $webhookUrl = $appUrl . '/webhooks/mercadopago.php';
     <div>
       <span class="admin-eyebrow">Cobros en línea</span>
       <h1>Pasarelas de pago</h1>
-      <p>Cambia la cuenta de Mercado Pago sin editar código ni exponer credenciales al navegador.</p>
+      <p>Cambia la cuenta de Mercado Pago sin editar código ni perder compatibilidad con pagos anteriores.</p>
     </div>
   </section>
 
@@ -136,7 +147,13 @@ $webhookUrl = $appUrl . '/webhooks/mercadopago.php';
       <div>
         <span class="admin-eyebrow">Mercado Pago</span>
         <h2>Cuenta y credenciales</h2>
-        <p class="form-help">Fuente actual: <strong><?= admin_e($sourceLabel) ?></strong>. Access Token: <strong><?= !empty($config['configured_access_token']) ? 'configurado' : 'pendiente' ?></strong>. Webhook Secret: <strong><?= !empty($config['configured_webhook_secret']) ? 'configurado' : 'pendiente' ?></strong>.</p>
+        <p class="form-help">
+          Fuente actual: <strong><?= admin_e($sourceLabel) ?></strong>.
+          Access Token: <strong><?= !empty($config['configured_access_token']) ? 'configurado' : 'pendiente' ?></strong>.
+          Webhook Secret: <strong><?= !empty($config['configured_webhook_secret']) ? 'configurado' : 'pendiente' ?></strong>.
+          <?php if ($credentialId > 0): ?>Versión actual: <strong>#<?= $credentialId ?></strong>.<?php endif; ?>
+          <?php if ($accountLabel !== ''): ?>Cuenta: <strong><?= admin_e($accountLabel) ?></strong>.<?php endif; ?>
+        </p>
       </div>
       <span class="status-pill <?= !empty($config['active']) ? 'status-active' : 'status-inactive' ?>"><?= !empty($config['active']) ? 'Activo' : 'Desactivado' ?></span>
     </div>
@@ -146,7 +163,7 @@ $webhookUrl = $appUrl . '/webhooks/mercadopago.php';
 
       <label class="toggle-field field-wide">
         <input type="checkbox" name="active" value="1" <?= !empty($config['active']) ? 'checked' : '' ?>>
-        <span><strong>Mercado Pago activo</strong><small>Si lo apagas, el checkout bloqueará temporalmente los pagos en línea.</small></span>
+        <span><strong>Mercado Pago activo</strong><small>Si lo apagas, el checkout bloqueará temporalmente los pagos en línea nuevos. Los webhooks históricos siguen procesándose.</small></span>
       </label>
 
       <label>
@@ -166,19 +183,19 @@ $webhookUrl = $appUrl . '/webhooks/mercadopago.php';
       <label class="field-wide">
         <span>Nuevo Access Token</span>
         <input type="password" name="access_token" maxlength="1000" value="" placeholder="Déjalo vacío para conservar el actual" autocomplete="new-password">
-        <p class="form-help">Por seguridad el token guardado nunca se vuelve a mostrar. Si cambias este token, debes introducir también el Webhook Secret de la misma integración. Antes de guardar, el servidor validará automáticamente el token con Mercado Pago.</p>
+        <p class="form-help">Por seguridad el token guardado nunca se vuelve a mostrar. Si cambias este token, debes introducir también el Webhook Secret de la misma integración. Antes de guardar, el servidor valida automáticamente la cuenta con Mercado Pago.</p>
       </label>
 
       <label class="field-wide">
         <span>Nuevo Webhook Secret</span>
         <input type="password" name="webhook_secret" maxlength="1000" value="" placeholder="Déjalo vacío para conservar el actual" autocomplete="new-password">
-        <p class="form-help">Se cifra antes de almacenarse y no se envía de vuelta al navegador. Si existe un pago todavía dentro de su ventana de 45 minutos, el panel bloqueará el cambio de credenciales hasta que se confirme o venza.</p>
+        <p class="form-help">Cada cambio crea una versión nueva cifrada. Las versiones anteriores se conservan para procesar devoluciones, contracargos y notificaciones de pedidos antiguos.</p>
       </label>
 
       <div class="field-wide" style="padding:14px;border:1px solid #dce5eb;border-radius:12px;background:#fbfdfe">
         <strong style="display:block;color:#123b5d;margin-bottom:6px">Webhook</strong>
         <code style="word-break:break-all"><?= admin_e($webhookUrl) ?></code>
-        <p class="form-help">Esta URL no cambia aunque cambies de cuenta; solo actualiza el secreto correspondiente en Mercado Pago y aquí.</p>
+        <p class="form-help">Esta URL no cambia aunque cambies de cuenta. El sistema conserva el secreto de cada versión para validar eventos históricos.</p>
       </div>
 
       <div class="editor-actions field-wide">
