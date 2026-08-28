@@ -8,12 +8,22 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$secret = trim((string) env('MERCADOPAGO_WEBHOOK_SECRET'));
+try {
+    $db = Database::connection();
+    $gateway = PaymentGatewayConfig::mercadoPago($db);
+} catch (Throwable $e) {
+    error_log('[tienda-natacion][mercadopago-webhook-config] ' . $e->getMessage());
+    http_response_code(500);
+    exit;
+}
+
+$secret = trim((string) ($gateway['webhook_secret'] ?? ''));
+$accessToken = trim((string) ($gateway['access_token'] ?? ''));
 $signature = trim((string) ($_SERVER['HTTP_X_SIGNATURE'] ?? ''));
 $requestId = trim((string) ($_SERVER['HTTP_X_REQUEST_ID'] ?? ''));
 $dataId = trim((string) ($_GET['data.id'] ?? $_GET['data_id'] ?? ''));
 
-if ($secret === '' || $signature === '' || $dataId === '') {
+if ($secret === '' || $accessToken === '' || $signature === '' || $dataId === '') {
     http_response_code(401);
     exit;
 }
@@ -55,8 +65,7 @@ try {
         exit;
     }
 
-    $db = Database::connection();
-    $payment = (new MercadoPago())->getPayment($dataId);
+    $payment = (new MercadoPago($accessToken))->getPayment($dataId);
     $orderId = OrderService::applyPayment($db, $payment);
 
     if ($orderId !== null && (string) ($payment['status'] ?? '') === 'approved') {
