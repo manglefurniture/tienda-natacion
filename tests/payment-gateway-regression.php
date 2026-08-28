@@ -42,9 +42,9 @@ $migrationSource = test_source('database/005_payment_gateway_config.sql');
 
 test_ok(str_contains($configSource, "private const CIPHER = 'aes-256-gcm'"), 'El cifrado debe seguir usando AES-256-GCM.');
 test_ok(str_contains($configSource, 'PAYMENT_GATEWAY_CONFIG_KEY'), 'La clave maestra debe permanecer fuera de la base de datos.');
-test_ok(str_contains($configSource, "if (!$row || (int) ($row['configurado'] ?? 0) !== 1)"), 'El .env solo debe ser fallback antes del primer guardado.');
-test_ok(!str_contains($configSource, ": $fallback['access_token']"), 'Una configuración guardada no debe mezclar Access Token con el .env.');
-test_ok(!str_contains($configSource, ": $fallback['webhook_secret']"), 'Una configuración guardada no debe mezclar Webhook Secret con el .env.');
+test_ok(str_contains($configSource, 'if (!$row || (int) ($row[\'configurado\'] ?? 0) !== 1)'), 'El .env solo debe ser fallback antes del primer guardado.');
+test_ok(!str_contains($configSource, ': $fallback[\'access_token\']'), 'Una configuración guardada no debe mezclar Access Token con el .env.');
+test_ok(!str_contains($configSource, ': $fallback[\'webhook_secret\']'), 'Una configuración guardada no debe mezclar Webhook Secret con el .env.');
 test_ok(str_contains($configSource, 'Al cambiar el Access Token, ingresa también el Webhook Secret'), 'Cambiar de cuenta debe exigir un par coherente de credenciales.');
 test_ok(str_contains($configSource, 'Agrega un Webhook Secret antes de activar Mercado Pago.'), 'No debe activarse la pasarela sin webhook firmado.');
 test_ok(str_contains($checkoutSource, 'PaymentGatewayConfig::mercadoPago($db)'), 'Checkout debe consumir la configuración centralizada.');
