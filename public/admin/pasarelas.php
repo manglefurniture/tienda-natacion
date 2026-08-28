@@ -144,11 +144,12 @@ $webhookUrl = $appUrl . '/webhooks/mercadopago.php';
       </label>
 
       <label>
-        <span>Ambiente</span>
+        <span>Tipo de credenciales</span>
         <select name="environment" style="width:100%;padding:12px 13px;border:1px solid #dce5eb;border-radius:11px;background:#fff">
           <option value="PRODUCTION" <?= ($config['environment'] ?? '') === 'PRODUCTION' ? 'selected' : '' ?>>Producción</option>
           <option value="TEST" <?= ($config['environment'] ?? '') === 'TEST' ? 'selected' : '' ?>>Pruebas</option>
         </select>
+        <p class="form-help">Es una etiqueta operativa. Mercado Pago determina si el pago es real o de prueba por las credenciales utilizadas, no por una URL distinta.</p>
       </label>
 
       <label>
@@ -159,7 +160,7 @@ $webhookUrl = $appUrl . '/webhooks/mercadopago.php';
       <label class="field-wide">
         <span>Nuevo Access Token</span>
         <input type="password" name="access_token" maxlength="1000" value="" placeholder="Déjalo vacío para conservar el actual" autocomplete="new-password">
-        <p class="form-help">Por seguridad el token guardado nunca se vuelve a mostrar.</p>
+        <p class="form-help">Por seguridad el token guardado nunca se vuelve a mostrar. Si cambias este token, debes introducir también el Webhook Secret de la misma integración.</p>
       </label>
 
       <label class="field-wide">
