@@ -26,6 +26,7 @@ function env(string $key, ?string $default = null): ?string
 }
 
 require_once $root . '/src/Database.php';
+require_once $root . '/src/PaymentGatewayConfig.php';
 require_once $root . '/src/MercadoPago.php';
 require_once $root . '/src/OrderService.php';
 require_once $root . '/src/ImageOptimizer.php';
