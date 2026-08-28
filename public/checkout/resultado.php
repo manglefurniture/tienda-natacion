@@ -6,29 +6,39 @@ require_once dirname(__DIR__, 2) . '/config/bootstrap.php';
 $db = Database::connection();
 $orderNumber = trim((string) ($_GET['pedido'] ?? $_GET['external_reference'] ?? ''));
 $paymentId = trim((string) ($_GET['payment_id'] ?? $_GET['collection_id'] ?? ''));
-$accessToken = '';
-
-try {
-    $gateway = PaymentGatewayConfig::mercadoPago($db);
-    $accessToken = trim((string) ($gateway['access_token'] ?? ''));
-} catch (Throwable $e) {
-    error_log('[tienda-natacion][payment-return-config] ' . $e->getMessage());
-}
-
-if ($orderNumber !== '' && $paymentId !== '' && $accessToken !== '') {
-    try {
-        $payment = (new MercadoPago($accessToken))->getPayment($paymentId);
-        OrderService::applyPayment($db, $payment);
-    } catch (Throwable $e) {
-        error_log('[tienda-natacion][payment-return] ' . $e->getMessage());
-    }
-}
 
 $order = null;
 if ($orderNumber !== '') {
     $stmt = $db->prepare('SELECT * FROM pedidos WHERE numero_pedido = ? LIMIT 1');
     $stmt->execute([$orderNumber]);
     $order = $stmt->fetch() ?: null;
+}
+
+$accessToken = '';
+if ($order !== null) {
+    try {
+        $credentialId = (int) ($order['mp_credencial_id'] ?? 0);
+        $gateway = $credentialId > 0
+            ? PaymentGatewayConfig::credentialById($db, $credentialId)
+            : PaymentGatewayConfig::mercadoPago($db);
+        $accessToken = trim((string) ($gateway['access_token'] ?? ''));
+    } catch (Throwable $e) {
+        error_log('[tienda-natacion][payment-return-config] ' . $e->getMessage());
+    }
+}
+
+if ($order !== null && $paymentId !== '' && $accessToken !== '') {
+    try {
+        $payment = (new MercadoPago($accessToken))->getPayment($paymentId);
+        OrderService::applyPayment($db, $payment);
+
+        // Recarga después de reconciliar para reflejar el estado actualizado.
+        $stmt = $db->prepare('SELECT * FROM pedidos WHERE id = ? LIMIT 1');
+        $stmt->execute([(int) $order['id']]);
+        $order = $stmt->fetch() ?: $order;
+    } catch (Throwable $e) {
+        error_log('[tienda-natacion][payment-return] ' . $e->getMessage());
+    }
 }
 
 $status = $order['estado'] ?? 'pending_payment';
