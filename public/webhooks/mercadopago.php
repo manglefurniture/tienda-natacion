@@ -10,20 +10,18 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 try {
     $db = Database::connection();
-    $gateway = PaymentGatewayConfig::mercadoPago($db);
+    $credentials = PaymentGatewayConfig::mercadoPagoCredentialCandidates($db);
 } catch (Throwable $e) {
     error_log('[tienda-natacion][mercadopago-webhook-config] ' . $e->getMessage());
     http_response_code(500);
     exit;
 }
 
-$secret = trim((string) ($gateway['webhook_secret'] ?? ''));
-$accessToken = trim((string) ($gateway['access_token'] ?? ''));
 $signature = trim((string) ($_SERVER['HTTP_X_SIGNATURE'] ?? ''));
 $requestId = trim((string) ($_SERVER['HTTP_X_REQUEST_ID'] ?? ''));
 $dataId = trim((string) ($_GET['data.id'] ?? $_GET['data_id'] ?? ''));
 
-if ($secret === '' || $accessToken === '' || $signature === '' || $dataId === '') {
+if ($credentials === [] || $signature === '' || $dataId === '') {
     http_response_code(401);
     exit;
 }
@@ -50,9 +48,8 @@ if ($ts !== '') {
     $manifestParts[] = 'ts:' . $ts;
 }
 $manifest = implode(';', $manifestParts) . ';';
-$expected = hash_hmac('sha256', $manifest, $secret);
 
-if ($v1 === '' || !hash_equals($expected, $v1)) {
+if ($v1 === '') {
     http_response_code(401);
     exit;
 }
@@ -65,8 +62,55 @@ try {
         exit;
     }
 
-    $payment = (new MercadoPago($accessToken))->getPayment($dataId);
+    $payment = null;
+    $matchedCredential = null;
+    $signatureMatched = false;
+    $lastFetchError = null;
+
+    foreach ($credentials as $credential) {
+        $secret = trim((string) ($credential['webhook_secret'] ?? ''));
+        $accessToken = trim((string) ($credential['access_token'] ?? ''));
+        if ($secret === '' || $accessToken === '') {
+            continue;
+        }
+
+        $expected = hash_hmac('sha256', $manifest, $secret);
+        if (!hash_equals($expected, $v1)) {
+            continue;
+        }
+
+        $signatureMatched = true;
+        try {
+            $candidatePayment = (new MercadoPago($accessToken))->getPayment($dataId);
+            $payment = $candidatePayment;
+            $matchedCredential = $credential;
+            break;
+        } catch (Throwable $fetchError) {
+            // Dos versiones pueden compartir secreto. Si el token de esta versión
+            // no puede leer el pago, continúa con las demás antes de fallar.
+            $lastFetchError = $fetchError;
+        }
+    }
+
+    if (!$signatureMatched) {
+        http_response_code(401);
+        exit;
+    }
+    if (!is_array($payment)) {
+        if ($lastFetchError !== null) {
+            throw $lastFetchError;
+        }
+        throw new RuntimeException('No se pudo resolver la versión de credenciales del pago.');
+    }
+
     $orderId = OrderService::applyPayment($db, $payment);
+
+    if ($orderId !== null && !empty($matchedCredential['credential_id'])) {
+        $bind = $db->prepare(
+            'UPDATE pedidos SET mp_credencial_id = COALESCE(mp_credencial_id, ?) WHERE id = ?'
+        );
+        $bind->execute([(int) $matchedCredential['credential_id'], $orderId]);
+    }
 
     if ($orderId !== null && (string) ($payment['status'] ?? '') === 'approved') {
         try {
