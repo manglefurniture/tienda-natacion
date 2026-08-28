@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS pasarelas_pago_credenciales (
     ambiente ENUM('TEST','PRODUCTION') NOT NULL DEFAULT 'PRODUCTION',
     public_key VARCHAR(255) NULL,
     access_token_enc TEXT NOT NULL,
-    webhook_secret_enc TEXT NOT NULL,
+    webhook_secret_enc TEXT NULL,
     cuenta_id VARCHAR(80) NULL,
     cuenta_label VARCHAR(190) NULL,
     created_by VARCHAR(120) NULL,
