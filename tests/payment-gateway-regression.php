@@ -37,6 +37,7 @@ require_once $root . '/src/PaymentGatewayConfig.php';
 $configSource = test_source('src/PaymentGatewayConfig.php');
 $panelSource = test_source('public/admin/pasarelas.php');
 $checkoutSource = test_source('public/api/checkout.php');
+$returnSource = test_source('public/checkout/resultado.php');
 $webhookSource = test_source('public/webhooks/mercadopago.php');
 $migrationSource = test_source('database/005_payment_gateway_config.sql');
 
@@ -47,8 +48,23 @@ test_ok(!str_contains($configSource, ': $fallback[\'access_token\']'), 'Una conf
 test_ok(!str_contains($configSource, ': $fallback[\'webhook_secret\']'), 'Una configuración guardada no debe mezclar Webhook Secret con el .env.');
 test_ok(str_contains($configSource, 'Al cambiar el Access Token, ingresa también el Webhook Secret'), 'Cambiar de cuenta debe exigir un par coherente de credenciales.');
 test_ok(str_contains($configSource, 'Agrega un Webhook Secret antes de activar Mercado Pago.'), 'No debe activarse la pasarela sin webhook firmado.');
+test_ok(str_contains($configSource, 'hasPayablePreferences($db)'), 'Cambiar credenciales debe revisar preferencias todavía cobrables.');
+test_ok(str_contains($configSource, "estado = 'pending_payment'"), 'La protección de cambio debe observar pedidos pendientes.');
+test_ok(str_contains($configSource, 'reserva_expira_en >= NOW()'), 'La protección debe respetar la ventana real de vigencia del pago.');
+
 test_ok(str_contains($panelSource, '(new MercadoPago($newAccessToken))->getCurrentUser()'), 'Un Access Token nuevo debe validarse con Mercado Pago antes de guardarse.');
+test_ok(str_contains($panelSource, 'OrderService::releaseExpiredReservations($db)'), 'El panel debe limpiar reservas vencidas antes de evaluar un cambio de credenciales.');
+
 test_ok(str_contains($checkoutSource, 'PaymentGatewayConfig::mercadoPago($db)'), 'Checkout debe consumir la configuración centralizada.');
+test_ok(str_contains($checkoutSource, "'expires' => true"), 'Las preferencias deben expirar junto con la reserva de stock.');
+test_ok(str_contains($checkoutSource, "'expiration_date_from'"), 'Checkout debe enviar inicio de vigencia a Mercado Pago.');
+test_ok(str_contains($checkoutSource, "'expiration_date_to'"), 'Checkout debe enviar fin de vigencia a Mercado Pago.');
+test_ok(str_contains($checkoutSource, "'sandbox_init_point' : 'init_point'"), 'TEST debe redirigir al sandbox y producción al checkout real.');
+
+test_ok(str_contains($returnSource, 'PaymentGatewayConfig::mercadoPago($db)'), 'El retorno del comprador debe usar la configuración centralizada.');
+test_ok(!str_contains($returnSource, "env('MERCADOPAGO_ACCESS_TOKEN')"), 'El retorno no debe depender del Access Token legacy.');
+test_ok(str_contains($returnSource, 'new MercadoPago($accessToken)'), 'El retorno debe reconciliar con el token resuelto por la configuración centralizada.');
+
 test_ok(str_contains($webhookSource, 'PaymentGatewayConfig::mercadoPago($db)'), 'Webhook debe consumir la misma configuración centralizada.');
 test_ok(!str_contains($checkoutSource, "env('MERCADOPAGO_ACCESS_TOKEN')"), 'Checkout no debe leer credenciales directamente del entorno.');
 test_ok(!str_contains($webhookSource, "env('MERCADOPAGO_WEBHOOK_SECRET')"), 'Webhook no debe leer secretos directamente del entorno.');
