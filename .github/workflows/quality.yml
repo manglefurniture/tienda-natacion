@@ -17,9 +17,4 @@ jobs:
       - name: PHP syntax
         run: find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
       - name: Payment gateway safety regressions
-        run: |
-          grep -q "PaymentGatewayConfig::mercadoPago" public/api/checkout.php
-          grep -q "PaymentGatewayConfig::mercadoPago" public/webhooks/mercadopago.php
-          grep -q "PAYMENT_GATEWAY_CONFIG_KEY" src/PaymentGatewayConfig.php
-          grep -q "openssl_encrypt" src/PaymentGatewayConfig.php
-          ! grep -q "access_token.*value=.*config\['access_token'\]" public/admin/pasarelas.php
+        run: php tests/payment-gateway-regression.php
