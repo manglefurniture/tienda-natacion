@@ -47,6 +47,7 @@ test_ok(!str_contains($configSource, ': $fallback[\'access_token\']'), 'Una conf
 test_ok(!str_contains($configSource, ': $fallback[\'webhook_secret\']'), 'Una configuración guardada no debe mezclar Webhook Secret con el .env.');
 test_ok(str_contains($configSource, 'Al cambiar el Access Token, ingresa también el Webhook Secret'), 'Cambiar de cuenta debe exigir un par coherente de credenciales.');
 test_ok(str_contains($configSource, 'Agrega un Webhook Secret antes de activar Mercado Pago.'), 'No debe activarse la pasarela sin webhook firmado.');
+test_ok(str_contains($panelSource, '(new MercadoPago($newAccessToken))->getCurrentUser()'), 'Un Access Token nuevo debe validarse con Mercado Pago antes de guardarse.');
 test_ok(str_contains($checkoutSource, 'PaymentGatewayConfig::mercadoPago($db)'), 'Checkout debe consumir la configuración centralizada.');
 test_ok(str_contains($webhookSource, 'PaymentGatewayConfig::mercadoPago($db)'), 'Webhook debe consumir la misma configuración centralizada.');
 test_ok(!str_contains($checkoutSource, "env('MERCADOPAGO_ACCESS_TOKEN')"), 'Checkout no debe leer credenciales directamente del entorno.');
