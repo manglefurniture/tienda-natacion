@@ -43,3 +43,4 @@ require_once $root . '/src/HacheBase/Upload/UploadStorage.php';
 require_once $root . '/src/HacheBase/Upload/LocalUploadStorage.php';
 require_once $root . '/src/HacheBase/Upload/PhpUploadAdapter.php';
 require_once $root . '/src/HacheBase/Upload/UploadService.php';
+require_once $root . '/src/ProductImageUploadPolicy.php';
