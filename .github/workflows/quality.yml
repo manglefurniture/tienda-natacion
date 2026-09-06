@@ -41,6 +41,9 @@ jobs:
       - name: Payment gateway safety regressions
         run: php tests/payment-gateway-regression.php
 
+      - name: Product image upload regressions
+        run: php tests/product-image-upload-regression.php
+
       - name: Build MariaDB schema
         env:
           MYSQL_PWD: root
