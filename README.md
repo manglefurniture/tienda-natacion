@@ -88,4 +88,8 @@ En producción conviene ejecutar ese comando periódicamente mediante cron.
 
 ## Imágenes
 
-El panel permite JPG, PNG y WebP. Cuando PHP GD está disponible, las imágenes nuevas se redimensionan automáticamente a un máximo de 1600 px y se recomprimen al volver al panel, sin cambiar sus URLs.
+El panel permite JPG, PNG y WebP. La política actual acepta hasta 6 fotos nuevas por solicitud, máximo 8 MB por archivo, 6000 px por lado y 16 megapíxeles. El servidor ignora nombre/MIME declarados por el navegador, determina el MIME a partir de los bytes, exige contenido de imagen válido y completo antes de guardarlo y genera un nombre aleatorio propio.
+
+La implementación adopta el snapshot P2-04 de Hache Base en el merge `572a9512eadf5a8e3d3a9b7df404aa667eac0a04`; los límites concretos siguen perteneciendo a Tienda Natación. El scanner antivirus queda explícitamente desactivado mientras no exista infraestructura/riesgo que justifique uno.
+
+Cuando PHP GD está disponible, las imágenes guardadas se redimensionan automáticamente a un máximo de 1600 px y se recomprimen al volver al panel, sin cambiar sus URLs. El detalle del piloto y su evidencia está en `docs/production-readiness/P2-04-UPLOAD-PILOT.md`.
