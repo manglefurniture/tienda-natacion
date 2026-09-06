@@ -34,3 +34,12 @@ require_once $root . '/src/OrderService.php';
 require_once $root . '/src/ImageOptimizer.php';
 require_once $root . '/src/ResendMailer.php';
 require_once $root . '/src/OrderNotificationService.php';
+
+// Snapshot of Hache Base P2-04 upload extension, source commit 572a9512eadf5a8e3d3a9b7df404aa667eac0a04.
+require_once $root . '/src/HacheBase/Upload/UploadRejected.php';
+require_once $root . '/src/HacheBase/Upload/UploadPolicy.php';
+require_once $root . '/src/HacheBase/Upload/UploadScanner.php';
+require_once $root . '/src/HacheBase/Upload/UploadStorage.php';
+require_once $root . '/src/HacheBase/Upload/LocalUploadStorage.php';
+require_once $root . '/src/HacheBase/Upload/PhpUploadAdapter.php';
+require_once $root . '/src/HacheBase/Upload/UploadService.php';
