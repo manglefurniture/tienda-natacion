@@ -36,7 +36,7 @@ final class ProductImageUploadPolicy
             'too_many_files' => 'Puedes subir hasta 6 fotos a la vez.',
             'too_large' => 'Cada foto debe pesar máximo 8 MB.',
             'image_dimensions_exceeded', 'image_pixels_exceeded' => 'La resolución de una foto es demasiado grande. Usa una imagen de hasta 6000 px por lado y 16 megapíxeles.',
-            'image_decoder_unavailable' => 'El servidor no puede validar ese formato de imagen de forma segura. Usa JPG o PNG, o intenta con otra imagen.',
+            'image_decoder_unavailable' => 'El servidor no puede validar ese formato de imagen de forma segura. Usa una imagen PNG o intenta con otra imagen.',
             'mime_not_allowed', 'invalid_image_content', 'image_mime_mismatch' => 'Solo se permiten imágenes JPG, PNG o WebP válidas y completas.',
             'invalid_transport_origin', 'malformed_transport', 'transport_error' => 'Una de las fotos no pudo subirse correctamente. Inténtalo de nuevo.',
             default => 'No se pudo validar una de las fotos. Inténtalo con otra imagen.',
