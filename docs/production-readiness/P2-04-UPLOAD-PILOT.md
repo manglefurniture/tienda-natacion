@@ -1,9 +1,9 @@
 # P2-04 — piloto de uploads seguros en Tienda Natación
 
-**Estado:** IMPLEMENTADO EN RAMA / pendiente CI, merge y smoke real de producción  
+**Estado:** INTEGRADO EN `main` / CI VERDE / pendiente despliegue y smoke real de producción  
 **Proyecto:** `manglefurniture/tienda-natacion`  
 **Caso real:** fotos de productos desde `/admin/producto.php`  
-**Referencia reusable:** Hache Base P2-04 merge `572a9512eadf5a8e3d3a9b7df404aa667eac0a04`
+**Referencia reusable:** Hache Base P2-04 baseline merge `572a9512eadf5a8e3d3a9b7df404aa667eac0a04`; hardening vigente hasta `61af8705671836e1e9a535b2373d15a10d39ef4b`
 
 ## Objetivo
 
@@ -17,8 +17,9 @@ El endpoint ya requería sesión administrativa y CSRF. El piloto sustituye la v
 | --- | --- |
 | filename/path traversal | nombre del cliente descartado; nombre de servidor aleatorio de 128 bits |
 | MIME declarado falso | `finfo` sobre bytes; allowlist JPG/PNG/WebP |
-| imagen truncada/corrupta | metadata + validación de contenido decodificable antes de almacenar |
-| imagen comprimida con dimensiones peligrosas | límites antes de decodificar: 6000 px por lado y 16 MP |
+| imagen truncada/corrupta | metadata + validación estructural y decodificación real antes de almacenar |
+| imagen comprimida con dimensiones peligrosas | límites antes de decodificar: 6000 px por lado y 16 MP; PNG limita además la inflación al layout declarado |
+| formato reconocido solo por cabecera | JPEG/WebP fallan cerrado si el runtime no dispone del decoder real del formato; PNG conserva validación fuerte propia con CRC/zlib/scanlines |
 | archivo demasiado grande | máximo 8 MB por archivo |
 | lote abusivo | máximo 6 uploads nuevos por request |
 | overwrite/collision | almacenamiento create-exclusive; no overwrite silencioso |
@@ -49,6 +50,9 @@ Estos valores pertenecen a Tienda Natación y no se convierten en defaults de Ha
 - descarte de filename/MIME del cliente;
 - aceptación de PNG válido con datos de imagen reales;
 - rechazo de PNG truncado/header-only aunque `getimagesize()` pueda leerlo;
+- rechazo de PNG pequeño cuyo stream intenta inflar mucho más que sus dimensiones declaradas;
+- WebP válido cuando existe decoder real y rechazo de contenedor WebP header-only sin bitstream;
+- fail-closed cuando falta el decoder real de un formato no-PNG;
 - hash SHA-256 source/storage;
 - nombre de storage independiente del nombre del cliente;
 - cleanup;
@@ -57,15 +61,23 @@ Estos valores pertenecen a Tienda Natación y no se convierten en defaults de Ha
 
 `.github/workflows/quality.yml` ejecuta esta regresión junto con la suite existente.
 
+## Evidencia ya cerrada
+
+- PR #3 integró el piloto base; merge `200151d214c3bd2e18c0c3863e5353e461465f2d`.
+- PR #4 incorporó el guard de decoder real y validación fail-closed; merge `f4c291820821febd04f14c7a75f082238b69065e`.
+- PR #5 corrigió el mensaje de fallback para no recomendar un formato cuyo decoder también podría faltar; merge `c8138d8fd5b563373fc365b2a8acef6bd1559042`.
+- Quality post-merge run `34075867775` terminó `success` sobre `main`.
+- El feedback automático técnicamente válido observado durante el ciclo quedó atendido y sin hilos técnicos pendientes antes de cada merge.
+
 ## Evidencia que falta para cerrar el piloto
 
 Este documento no declara PASS todavía. Para cerrar la adopción real se requiere:
 
-1. CI verde en el PR del proyecto;
-2. merge sin feedback técnico pendiente;
-3. despliegue mediante el mecanismo real del proyecto;
-4. smoke administrativo con una imagen válida y una inválida, sin afectar pedidos/stock;
-5. confirmar que la URL almacenada se sirve como imagen y que la ruta no ejecuta scripts;
-6. revisión humana final.
+1. despliegue mediante el mecanismo real del proyecto;
+2. smoke administrativo con una imagen válida y una inválida, sin afectar pedidos/stock;
+3. confirmar que la URL almacenada se sirve como imagen y que la ruta no ejecuta scripts;
+4. revisión humana final.
 
-Hasta entonces P2-04 está implementado como primitive reusable en Hache Base y en validación real dentro de Tienda Natación.
+El repositorio solo versiona el workflow de Quality; por eso un despliegue real no puede inferirse de GitHub Actions y debe conservarse como evidencia separada.
+
+Hasta entonces P2-04 está implementado como primitive reusable en Hache Base e integrado en `main` de Tienda Natación, pero la adopción de producción sigue abierta.
