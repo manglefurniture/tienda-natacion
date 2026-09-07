@@ -121,17 +121,9 @@ final class UploadService
             throw new UploadRejected('invalid_image_content');
         }
 
-        if (function_exists('imagecreatefromstring')) {
-            $decoded = @imagecreatefromstring($bytes);
-            if ($decoded === false) {
-                throw new UploadRejected('invalid_image_content');
-            }
-            @imagedestroy($decoded);
-            return;
-        }
-
+        $decoder = self::gdDecoderForMime($mime);
         $valid = match ($mime) {
-            'image/png' => self::inspectPng($bytes),
+            'image/png' => self::inspectPng($bytes, $decoder !== null),
             'image/jpeg' => self::inspectJpeg($bytes),
             'image/webp' => self::inspectWebp($bytes),
             'image/gif' => self::inspectGif($bytes),
@@ -141,9 +133,28 @@ final class UploadService
         if (!$valid) {
             throw new UploadRejected('invalid_image_content');
         }
+
+        if ($decoder !== null) {
+            $decoded = @$decoder($path);
+            if ($decoded === false) {
+                throw new UploadRejected('invalid_image_content');
+            }
+            @imagedestroy($decoded);
+        }
     }
 
-    private static function inspectPng(string $bytes): bool
+    private static function gdDecoderForMime(string $mime): ?string
+    {
+        return match ($mime) {
+            'image/png' => function_exists('imagecreatefrompng') ? 'imagecreatefrompng' : null,
+            'image/jpeg' => function_exists('imagecreatefromjpeg') ? 'imagecreatefromjpeg' : null,
+            'image/webp' => function_exists('imagecreatefromwebp') ? 'imagecreatefromwebp' : null,
+            'image/gif' => function_exists('imagecreatefromgif') ? 'imagecreatefromgif' : null,
+            default => null,
+        };
+    }
+
+    private static function inspectPng(string $bytes, bool $hasNativeDecoder): bool
     {
         $signature = "\x89PNG\r\n\x1a\n";
         if (!str_starts_with($bytes, $signature)) {
@@ -155,6 +166,10 @@ final class UploadService
         $seenIhdr = false;
         $seenIdat = false;
         $idat = '';
+        $width = 0;
+        $height = 0;
+        $bitsPerPixel = 0;
+        $interlace = 0;
 
         while ($offset + 12 <= $length) {
             $lengthData = unpack('Nvalue', substr($bytes, $offset, 4));
@@ -179,6 +194,40 @@ final class UploadService
                 if ($type !== 'IHDR' || $chunkLength !== 13) {
                     return false;
                 }
+                $header = unpack('Nwidth/Nheight/CbitDepth/CcolorType/Ccompression/Cfilter/Cinterlace', $data);
+                if (!is_array($header)) {
+                    return false;
+                }
+                $width = (int) ($header['width'] ?? 0);
+                $height = (int) ($header['height'] ?? 0);
+                $bitDepth = (int) ($header['bitDepth'] ?? 0);
+                $colorType = (int) ($header['colorType'] ?? -1);
+                $compression = (int) ($header['compression'] ?? -1);
+                $filter = (int) ($header['filter'] ?? -1);
+                $interlace = (int) ($header['interlace'] ?? -1);
+                if ($width < 1 || $height < 1 || $compression !== 0 || $filter !== 0 || !in_array($interlace, [0, 1], true)) {
+                    return false;
+                }
+
+                $samples = match ($colorType) {
+                    0 => 1,
+                    2 => 3,
+                    3 => 1,
+                    4 => 2,
+                    6 => 4,
+                    default => 0,
+                };
+                $validDepths = match ($colorType) {
+                    0 => [1, 2, 4, 8, 16],
+                    2 => [8, 16],
+                    3 => [1, 2, 4, 8],
+                    4, 6 => [8, 16],
+                    default => [],
+                };
+                if ($samples === 0 || !in_array($bitDepth, $validDepths, true)) {
+                    return false;
+                }
+                $bitsPerPixel = $samples * $bitDepth;
                 $seenIhdr = true;
             } elseif ($type === 'IHDR') {
                 return false;
@@ -196,12 +245,25 @@ final class UploadService
                 if ($chunkLength !== 0 || !$seenIhdr || !$seenIdat || $chunkEnd !== $length) {
                     return false;
                 }
+
+                $layout = self::pngPassLayout($width, $height, $interlace);
+                $expectedInflated = self::pngExpectedInflatedBytes($layout, $bitsPerPixel);
+                if ($expectedInflated === null || $expectedInflated < 1) {
+                    return false;
+                }
+
                 if (function_exists('zlib_decode')) {
-                    $inflated = @zlib_decode($idat);
-                    if (!is_string($inflated) || $inflated === '') {
+                    $inflated = @zlib_decode($idat, $expectedInflated);
+                    if (!is_string($inflated) || strlen($inflated) !== $expectedInflated) {
                         return false;
                     }
+                    if (!self::pngScanlinesValid($inflated, $layout, $bitsPerPixel)) {
+                        return false;
+                    }
+                } elseif (!$hasNativeDecoder) {
+                    return false;
                 }
+
                 return true;
             }
 
@@ -209,6 +271,85 @@ final class UploadService
         }
 
         return false;
+    }
+
+    /** @return list<array{0:int,1:int}> */
+    private static function pngPassLayout(int $width, int $height, int $interlace): array
+    {
+        if ($interlace === 0) {
+            return [[$width, $height]];
+        }
+
+        $passes = [
+            [0, 0, 8, 8],
+            [4, 0, 8, 8],
+            [0, 4, 4, 8],
+            [2, 0, 4, 4],
+            [0, 2, 2, 4],
+            [1, 0, 2, 2],
+            [0, 1, 1, 2],
+        ];
+        $layout = [];
+        foreach ($passes as [$startX, $startY, $stepX, $stepY]) {
+            $passWidth = $width > $startX ? intdiv($width - $startX + $stepX - 1, $stepX) : 0;
+            $passHeight = $height > $startY ? intdiv($height - $startY + $stepY - 1, $stepY) : 0;
+            if ($passWidth > 0 && $passHeight > 0) {
+                $layout[] = [$passWidth, $passHeight];
+            }
+        }
+        return $layout;
+    }
+
+    /** @param list<array{0:int,1:int}> $layout */
+    private static function pngExpectedInflatedBytes(array $layout, int $bitsPerPixel): ?int
+    {
+        if ($bitsPerPixel < 1) {
+            return null;
+        }
+        $total = 0;
+        foreach ($layout as [$passWidth, $passHeight]) {
+            $rowBytes = self::pngRowBytes($passWidth, $bitsPerPixel);
+            if ($rowBytes === null || $passHeight < 1) {
+                return null;
+            }
+            $perRow = $rowBytes + 1;
+            if ($passHeight > intdiv(PHP_INT_MAX - $total, $perRow)) {
+                return null;
+            }
+            $total += $passHeight * $perRow;
+        }
+        return $total;
+    }
+
+    private static function pngRowBytes(int $width, int $bitsPerPixel): ?int
+    {
+        if ($width < 1 || $bitsPerPixel < 1 || $width > intdiv(PHP_INT_MAX - 7, $bitsPerPixel)) {
+            return null;
+        }
+        return intdiv(($width * $bitsPerPixel) + 7, 8);
+    }
+
+    /** @param list<array{0:int,1:int}> $layout */
+    private static function pngScanlinesValid(string $inflated, array $layout, int $bitsPerPixel): bool
+    {
+        $offset = 0;
+        $length = strlen($inflated);
+        foreach ($layout as [$passWidth, $passHeight]) {
+            $rowBytes = self::pngRowBytes($passWidth, $bitsPerPixel);
+            if ($rowBytes === null) {
+                return false;
+            }
+            for ($row = 0; $row < $passHeight; $row++) {
+                if ($offset >= $length || ord($inflated[$offset]) > 4) {
+                    return false;
+                }
+                $offset += 1 + $rowBytes;
+                if ($offset > $length) {
+                    return false;
+                }
+            }
+        }
+        return $offset === $length;
     }
 
     private static function inspectJpeg(string $bytes): bool
