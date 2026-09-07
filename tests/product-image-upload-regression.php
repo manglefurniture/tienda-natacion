@@ -54,6 +54,25 @@ function uploadHeaderOnlyPng(): string
         . uploadPngChunk('IEND', '');
 }
 
+function uploadInflationBombPng(): string
+{
+    uploadCheck(function_exists('gzcompress'), 'zlib unavailable');
+    $compressed = gzcompress(str_repeat("\x00", 1024 * 1024), 9);
+    uploadCheck(is_string($compressed) && $compressed !== '', 'could not build inflation fixture');
+
+    return "\x89PNG\r\n\x1a\n"
+        . uploadPngChunk('IHDR', pack('NNCCCCC', 1, 1, 8, 6, 0, 0, 0))
+        . uploadPngChunk('IDAT', $compressed)
+        . uploadPngChunk('IEND', '');
+}
+
+function uploadValidWebp(): string
+{
+    $bytes = base64_decode('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', true);
+    uploadCheck(is_string($bytes) && $bytes !== '', 'could not build WebP fixture');
+    return $bytes;
+}
+
 $policy = ProductImageUploadPolicy::create();
 uploadCheck($policy->maxBytes === 8 * 1024 * 1024, 'max bytes drift');
 uploadCheck($policy->maxFiles === 6, 'max files drift');
@@ -108,6 +127,32 @@ try {
             'declared_size' => $truncatedSize,
         ]);
     });
+
+    $inflation = $sourceDir . '/inflation.png';
+    file_put_contents($inflation, uploadInflationBombPng());
+    $inflationSize = filesize($inflation);
+    uploadCheck(is_int($inflationSize), 'inflation fixture size unavailable');
+    $inflationInfo = @getimagesize($inflation);
+    uploadCheck(is_array($inflationInfo) && (int) $inflationInfo[0] === 1 && (int) $inflationInfo[1] === 1, 'inflation fixture must advertise tiny dimensions');
+    uploadExpectRejected('invalid_image_content', static function () use ($inflation, $inflationSize, $storageDir, $policy): void {
+        (new UploadService($policy, new LocalUploadStorage($storageDir, 0644)))->store([
+            'path' => $inflation,
+            'declared_size' => $inflationSize,
+        ]);
+    });
+
+    $webp = $sourceDir . '/valid.webp';
+    file_put_contents($webp, uploadValidWebp());
+    $webpSize = filesize($webp);
+    uploadCheck(is_int($webpSize), 'webp fixture size unavailable');
+    $webpInfo = @getimagesize($webp);
+    uploadCheck(is_array($webpInfo) && ($webpInfo['mime'] ?? null) === 'image/webp', 'webp fixture not recognized');
+    $webpReceipt = (new UploadService($policy, new LocalUploadStorage($storageDir, 0644)))->store([
+        'path' => $webp,
+        'declared_size' => $webpSize,
+    ]);
+    uploadCheck($webpReceipt['mime'] === 'image/webp' && $webpReceipt['extension'] === 'webp', 'webp fallback acceptance drift');
+    (new UploadService($policy, new LocalUploadStorage($storageDir, 0644)))->delete($webpReceipt);
 
     uploadExpectRejected('too_many_files', static function () use ($valid, $validSize, $policy): void {
         PhpUploadAdapter::candidates([
