@@ -179,10 +179,10 @@ $flash = admin_take_flash();
       <label class="upload-box">
         <span class="upload-icon">＋</span>
         <strong>Agregar fotos</strong>
-        <small>JPG, PNG o WebP · hasta 8 MB por imagen</small>
+        <small>JPG, PNG o WebP · hasta 8 MB · máximo 6000 px por lado / 16 MP</small>
         <input type="file" name="imagenes[]" accept="image/jpeg,image/png,image/webp" multiple>
       </label>
-      <p class="form-help">Las nuevas fotos se guardan desde este panel. Ya no necesitas subirlas a GitHub.</p>
+      <p class="form-help">Puedes subir hasta 6 fotos nuevas a la vez. El servidor valida el archivo completo antes de guardarlo.</p>
     </section>
 
     <div class="editor-actions">

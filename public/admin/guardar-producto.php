@@ -40,7 +40,8 @@ if ($sku !== null && strlen($sku) > 64) {
     admin_redirect($returnUrl);
 }
 
-$uploadedPaths = [];
+$uploadedReceipts = [];
+$uploadService = null;
 $filesToDeleteAfterCommit = [];
 
 try {
@@ -203,62 +204,18 @@ try {
 
     $uploadDir = admin_upload_dir();
     $uploadUrl = admin_upload_url();
-    $uploadNames = $_FILES['imagenes']['name'] ?? [];
-    $uploadTmp = $_FILES['imagenes']['tmp_name'] ?? [];
-    $uploadErrors = $_FILES['imagenes']['error'] ?? [];
-    $uploadSizes = $_FILES['imagenes']['size'] ?? [];
+    $uploadPolicy = ProductImageUploadPolicy::create();
+    $uploadStorage = new HacheBase\Integrations\Upload\LocalUploadStorage($uploadDir, 0644);
+    $uploadService = new HacheBase\Integrations\Upload\UploadService($uploadPolicy, $uploadStorage);
+    $candidates = HacheBase\Integrations\Upload\PhpUploadAdapter::candidates(
+        is_array($_FILES['imagenes'] ?? null) ? $_FILES['imagenes'] : [],
+        $uploadPolicy,
+    );
 
-    if (!is_array($uploadNames)) {
-        $uploadNames = [];
-    }
-
-    $pendingUploads = 0;
-    foreach ($uploadNames as $index => $originalName) {
-        $error = (int) ($uploadErrors[$index] ?? UPLOAD_ERR_NO_FILE);
-        if ($error === UPLOAD_ERR_NO_FILE) {
-            continue;
-        }
-        $pendingUploads++;
-        if ($pendingUploads > 6) {
-            throw new RuntimeException('Puedes subir hasta 6 fotos a la vez.');
-        }
-        if ($error !== UPLOAD_ERR_OK) {
-            throw new RuntimeException('Una de las fotos no pudo subirse. Inténtalo de nuevo.');
-        }
-        if ((int) ($uploadSizes[$index] ?? 0) > 8 * 1024 * 1024) {
-            throw new RuntimeException('Cada foto debe pesar máximo 8 MB.');
-        }
-
-        if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
-            throw new RuntimeException('No se pudo crear la carpeta de imágenes en el servidor.');
-        }
-        if (!is_writable($uploadDir)) {
-            throw new RuntimeException('La carpeta de imágenes no tiene permisos de escritura.');
-        }
-
-        $tmpPath = (string) ($uploadTmp[$index] ?? '');
-        if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
-            throw new RuntimeException('La carga de una imagen no es válida.');
-        }
-
-        $finfo = new finfo(FILEINFO_MIME_TYPE);
-        $mime = (string) $finfo->file($tmpPath);
-        $allowed = [
-            'image/jpeg' => 'jpg',
-            'image/png' => 'png',
-            'image/webp' => 'webp',
-        ];
-        if (!isset($allowed[$mime]) || @getimagesize($tmpPath) === false) {
-            throw new RuntimeException('Solo se permiten imágenes JPG, PNG o WebP válidas.');
-        }
-
-        $fileName = sprintf('producto-%d-%s.%s', $id, bin2hex(random_bytes(8)), $allowed[$mime]);
-        $destination = $uploadDir . '/' . $fileName;
-        if (!move_uploaded_file($tmpPath, $destination)) {
-            throw new RuntimeException('No se pudo guardar una de las imágenes.');
-        }
-        @chmod($destination, 0644);
-        $uploadedPaths[] = $destination;
+    foreach ($candidates as $candidate) {
+        $receipt = $uploadService->store($candidate);
+        $uploadedReceipts[] = $receipt;
+        $fileName = basename((string) $receipt['stored']['path']);
         $imageList[] = [
             'id' => 0,
             'url' => $uploadUrl . '/' . $fileName,
@@ -298,16 +255,22 @@ try {
     if ($db->inTransaction()) {
         $db->rollBack();
     }
-    foreach ($uploadedPaths as $path) {
-        if (is_file($path)) {
-            @unlink($path);
+    if ($uploadService instanceof HacheBase\Integrations\Upload\UploadService) {
+        foreach ($uploadedReceipts as $receipt) {
+            try {
+                $uploadService->delete($receipt);
+            } catch (Throwable $cleanupError) {
+                error_log('[tienda-natacion][admin] upload cleanup error: ' . $cleanupError->getMessage());
+            }
         }
     }
 
     error_log('[tienda-natacion][admin] save product error: ' . $e->getMessage());
-    $message = $e instanceof RuntimeException
-        ? $e->getMessage()
-        : 'No se pudo guardar el producto. Revisa los datos e inténtalo otra vez.';
+    $message = $e instanceof HacheBase\Integrations\Upload\UploadRejected
+        ? ProductImageUploadPolicy::userMessage($e)
+        : ($e instanceof RuntimeException
+            ? $e->getMessage()
+            : 'No se pudo guardar el producto. Revisa los datos e inténtalo otra vez.');
     admin_flash('error', $message);
     admin_redirect($returnUrl);
 }
