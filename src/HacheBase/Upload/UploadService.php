@@ -140,6 +140,11 @@ final class UploadService
                 throw new UploadRejected('invalid_image_content');
             }
             @imagedestroy($decoded);
+            return;
+        }
+
+        if ($mime !== 'image/png') {
+            throw new UploadRejected('image_decoder_unavailable');
         }
     }
 
