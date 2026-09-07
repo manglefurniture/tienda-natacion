@@ -17,15 +17,17 @@ function uploadCheck(bool $condition, string $message): void
     }
 }
 
-function uploadExpectRejected(string $reason, callable $callback): void
+/** @param string|list<string> $reason */
+function uploadExpectRejected(string|array $reason, callable $callback): void
 {
+    $reasons = is_array($reason) ? $reason : [$reason];
     try {
         $callback();
     } catch (UploadRejected $error) {
-        uploadCheck($error->reason === $reason, "expected={$reason} actual={$error->reason}");
+        uploadCheck(in_array($error->reason, $reasons, true), 'unexpected rejection=' . $error->reason);
         return;
     }
-    uploadCheck(false, "expected rejection={$reason}");
+    uploadCheck(false, 'expected rejection=' . implode('|', $reasons));
 }
 
 function uploadPngChunk(string $type, string $data): string
@@ -71,6 +73,13 @@ function uploadValidWebp(): string
     $bytes = base64_decode('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', true);
     uploadCheck(is_string($bytes) && $bytes !== '', 'could not build WebP fixture');
     return $bytes;
+}
+
+function uploadHeaderOnlyWebp(): string
+{
+    $vp8xPayload = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+    $chunk = 'VP8X' . pack('V', strlen($vp8xPayload)) . $vp8xPayload;
+    return 'RIFF' . pack('V', 4 + strlen($chunk)) . 'WEBP' . $chunk;
 }
 
 $policy = ProductImageUploadPolicy::create();
@@ -141,18 +150,35 @@ try {
         ]);
     });
 
+    $fakeWebp = $sourceDir . '/header-only.webp';
+    file_put_contents($fakeWebp, uploadHeaderOnlyWebp());
+    $fakeWebpSize = filesize($fakeWebp);
+    uploadCheck(is_int($fakeWebpSize), 'header-only webp size unavailable');
+    $fakeWebpInfo = @getimagesize($fakeWebp);
+    uploadCheck(is_array($fakeWebpInfo) && ($fakeWebpInfo['mime'] ?? null) === 'image/webp', 'header-only webp fixture must demonstrate metadata gap');
+    uploadExpectRejected(['invalid_image_content', 'image_decoder_unavailable'], static function () use ($fakeWebp, $fakeWebpSize, $storageDir, $policy): void {
+        (new UploadService($policy, new LocalUploadStorage($storageDir, 0644)))->store([
+            'path' => $fakeWebp,
+            'declared_size' => $fakeWebpSize,
+        ]);
+    });
+
     $webp = $sourceDir . '/valid.webp';
     file_put_contents($webp, uploadValidWebp());
     $webpSize = filesize($webp);
     uploadCheck(is_int($webpSize), 'webp fixture size unavailable');
     $webpInfo = @getimagesize($webp);
     uploadCheck(is_array($webpInfo) && ($webpInfo['mime'] ?? null) === 'image/webp', 'webp fixture not recognized');
-    $webpReceipt = (new UploadService($policy, new LocalUploadStorage($storageDir, 0644)))->store([
-        'path' => $webp,
-        'declared_size' => $webpSize,
-    ]);
-    uploadCheck($webpReceipt['mime'] === 'image/webp' && $webpReceipt['extension'] === 'webp', 'webp fallback acceptance drift');
-    (new UploadService($policy, new LocalUploadStorage($storageDir, 0644)))->delete($webpReceipt);
+    $webpService = new UploadService($policy, new LocalUploadStorage($storageDir, 0644));
+    if (function_exists('imagecreatefromwebp')) {
+        $webpReceipt = $webpService->store(['path' => $webp, 'declared_size' => $webpSize]);
+        uploadCheck($webpReceipt['mime'] === 'image/webp' && $webpReceipt['extension'] === 'webp', 'webp acceptance drift');
+        $webpService->delete($webpReceipt);
+    } else {
+        uploadExpectRejected('image_decoder_unavailable', static function () use ($webpService, $webp, $webpSize): void {
+            $webpService->store(['path' => $webp, 'declared_size' => $webpSize]);
+        });
+    }
 
     uploadExpectRejected('too_many_files', static function () use ($valid, $validSize, $policy): void {
         PhpUploadAdapter::candidates([
@@ -166,6 +192,10 @@ try {
         ProductImageUploadPolicy::userMessage(new UploadRejected('invalid_image_content'))
             === 'Solo se permiten imágenes JPG, PNG o WebP válidas y completas.',
         'friendly invalid-image message drift'
+    );
+    uploadCheck(
+        str_contains(ProductImageUploadPolicy::userMessage(new UploadRejected('image_decoder_unavailable')), 'no puede validar'),
+        'friendly decoder-unavailable message missing'
     );
 
     echo "PRODUCT_IMAGE_UPLOAD_OK\n";
