@@ -1,6 +1,6 @@
 # P2-04 — piloto de uploads seguros en Tienda Natación
 
-**Estado:** INTEGRADO EN `main` / CI VERDE / pendiente despliegue y smoke real de producción  
+**Estado:** PRODUCCIÓN VERIFICADA / smoke técnico PASS / revisión humana final pendiente  
 **Proyecto:** `manglefurniture/tienda-natacion`  
 **Caso real:** fotos de productos desde `/admin/producto.php`  
 **Referencia reusable:** Hache Base P2-04 baseline merge `572a9512eadf5a8e3d3a9b7df404aa667eac0a04`; hardening vigente hasta `61af8705671836e1e9a535b2373d15a10d39ef4b`
@@ -61,7 +61,7 @@ Estos valores pertenecen a Tienda Natación y no se convierten en defaults de Ha
 
 `.github/workflows/quality.yml` ejecuta esta regresión junto con la suite existente.
 
-## Evidencia ya cerrada
+## Evidencia ya cerrada en GitHub
 
 - PR #3 integró el piloto base; merge `200151d214c3bd2e18c0c3863e5353e461465f2d`.
 - PR #4 incorporó el guard de decoder real y validación fail-closed; merge `f4c291820821febd04f14c7a75f082238b69065e`.
@@ -69,15 +69,25 @@ Estos valores pertenecen a Tienda Natación y no se convierten en defaults de Ha
 - Quality post-merge run `34075867775` terminó `success` sobre `main`.
 - El feedback automático técnicamente válido observado durante el ciclo quedó atendido y sin hilos técnicos pendientes antes de cada merge.
 
-## Evidencia que falta para cerrar el piloto
+## Verificación real de producción — 2026-09-24
 
-Este documento no declara PASS todavía. Para cerrar la adopción real se requiere:
+La revisión se hizo sin crear productos, modificar stock, pedidos ni registros de negocio.
 
-1. despliegue mediante el mecanismo real del proyecto;
-2. smoke administrativo con una imagen válida y una inválida, sin afectar pedidos/stock;
-3. confirmar que la URL almacenada se sirve como imagen y que la ruta no ejecuta scripts;
-4. revisión humana final.
+- checkout productivo `/var/www/tienda.hnatacion.com/app`: HEAD `36852aed67e11de19ed2df0095a2fe6dbda58da5`, igual a `origin/main`;
+- Nginx sirve `tienda.hnatacion.com` desde `/var/www/tienda.hnatacion.com/app/public`;
+- runtime: PHP 8.4.24;
+- codecs reales disponibles: JPEG, PNG, WebP y GIF; `zlib_decode()` disponible;
+- `php tests/product-image-upload-regression.php` ejecutado sobre el checkout productivo: `PRODUCT_IMAGE_UPLOAD_OK`;
+- una imagen real ya almacenada bajo `/uploads/productos/` fue identificada localmente como `image/jpeg` y servida por HTTPS con `HTTP 200`, `Content-Type: image/jpeg` y tamaño coherente;
+- una ruta `.php` inexistente bajo `/uploads/productos/` devolvió `404`;
+- la política de storage sigue derivando la extensión exclusivamente de MIME allowlisted, por lo que el cliente no puede seleccionar una extensión ejecutable.
 
-El repositorio solo versiona el workflow de Quality; por eso un despliegue real no puede inferirse de GitHub Actions y debe conservarse como evidencia separada.
+### Alcance del smoke
 
-Hasta entonces P2-04 está implementado como primitive reusable en Hache Base e integrado en `main` de Tienda Natación, pero la adopción de producción sigue abierta.
+No se realizó una mutación real mediante `/admin/guardar-producto.php` porque hacerlo habría requerido crear o modificar un producto de producción únicamente para la prueba. La frontera multipart/`is_uploaded_file()` permanece cubierta por la regresión automatizada; la verificación de producción confirmó el mismo código desplegado, codecs reales, validación positiva/negativa y servibilidad del storage real sin tocar datos de negocio.
+
+## Cierre pendiente
+
+La parte técnica de despliegue y smoke productivo está verificada. Solo queda la revisión humana final exigida por la plantilla de adopción de Hache Base antes de etiquetar P2-04 como adopción completamente cerrada.
+
+Hasta esa revisión, P2-04 debe describirse como **producción verificada / revisión humana pendiente**, no como piloto sin desplegar.
